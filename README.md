@@ -12,7 +12,7 @@ A video tutorial about visualization in the Annotater is available here:<br />
 https://youtu.be/lkSRFtUOFlU<br />
 
 A video tutorial showing how to annotate nuclei in the Annotateris available here:<br />
-https://youtu.be/0eVFktKX9PE<br />
+https://youtu.be/PaNLPxn0o1E<br />
 
 A video tutorial showing how to associate markers with nuclei in the Annotater is available here:<br />
 https://youtu.be/I-02CSyVrjg<br />
