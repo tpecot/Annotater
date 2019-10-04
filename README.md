@@ -15,4 +15,6 @@ A video tutorial showing how to annotate nuclei in the Annotateris available her
 https://youtu.be/0eVFktKX9PE<br />
 
 A video tutorial showing how to associate markers with nuclei in the Annotater is available here:<br />
-https://youtu.be/I-02CSyVrjg
+https://youtu.be/I-02CSyVrjg<br />
+
+The images used in these video tutorials are available in the folder TutorialImages.
