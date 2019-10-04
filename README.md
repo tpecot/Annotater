@@ -2,9 +2,9 @@
 ImageJ plugin for annotating multi-spectral 2D images.
 
 <br />
-The Annotater was designed to annotate nuclei or to correct pre-segmented nuclei. It also allows to associate markers with individual nuclei, manually or by using a thresholding tool.
-<br />
+The Annotater was designed to annotate nuclei or to correct nuclei segmentation. It also allows to associate markers with individual nuclei, manually or by using a thresholding tool.
 
+# Video tutorials
 A video tutorial for installing Fiji/ImageJ and the Annotater is available here:<br />
 https://youtu.be/lkSRFtUOFlU<br />
 
