@@ -6,7 +6,7 @@ The Annotater was designed to annotate nuclei or to correct nuclei segmentation.
 
 # Video tutorials
 A video tutorial for installing Fiji/ImageJ and the Annotater is available here:<br />
-https://youtu.be/lkSRFtUOFlU<br />
+https://youtu.be/m0s_e4nQL-Y<br />
 
 A video tutorial about visualization in the Annotater is available here:<br />
 https://youtu.be/lkSRFtUOFlU<br />
