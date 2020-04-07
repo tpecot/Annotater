@@ -6,6 +6,8 @@ http://www.gnu.org/licenses/agpl-3.0.txt
 package edu.musc.tsl;
 
 import net.imglib2.type.numeric.RealType;
+
+import org.apache.commons.lang3.ObjectUtils.Null;
 import org.scijava.command.Command;
 import org.scijava.plugin.Plugin;
 
@@ -13,10 +15,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.lang.Math;
+import java.io.File;
 
 import fiji.util.gui.GenericDialogPlus;
 import fiji.util.gui.OverlayedImageCanvas;
 import ij.IJ;
+import ij.io.DirectoryChooser;
+import ij.io.OpenDialog;
+import ij.io.Opener;
 import ij.plugin.frame.RoiManager;
 import ij.ImagePlus;
 import ij.ImageStack;
@@ -24,8 +30,11 @@ import ij.WindowManager;
 import ij.gui.FreehandRoi;
 import ij.gui.ImageWindow;
 import ij.gui.Overlay;
+import ij.gui.PointRoi;
 import ij.gui.PolygonRoi;
 import ij.gui.Roi;
+import ij.gui.RoiProperties;
+import ij.gui.ShapeRoi;
 import ij.gui.Wand;
 import ij.gui.Toolbar;
 import ij.io.SaveDialog;
@@ -38,7 +47,10 @@ import ij.process.FloatProcessor;
 import ij.process.ImageProcessor;
 import ij.process.ImageStatistics;
 import ij.process.LUT;
+import ij.process.EllipseFitter;
 import ij.measure.ResultsTable;
+import ij.macro.Interpreter;
+import ij.Macro;
 
 import java.awt.Color;
 import java.awt.Component;
@@ -70,12 +82,16 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JRadioButton;
 import javax.swing.JSlider;
+import javax.swing.JTextField;
+import javax.swing.JTextArea;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.ButtonGroup;
 
 /**
@@ -91,33 +107,32 @@ import javax.swing.ButtonGroup;
 @Plugin(type = Command.class, menuPath = "Plugins>Annotater")
 public class Annotater<T extends RealType<T>> implements Command {
 	
+	String imageFilePath;
 	/** maximum number of classes (labels) allowed on the GUI*/
 	private static final int MAX_NUM_CLASSES = 5;
-	private static final int MAX_NUM_MARKERS = 10;
+	private static final int MAX_NUM_MARKERS = 7;
 	/** plugin opening **/
-	private int on = 0;
+	private boolean on = false;
 	/** current mode: 0 -> nuclei annotation; 2: -> marker annotation **/
-	private int currentMode = 0;
+	private byte currentMode = 0;
 	/** class currently added **/
-	private int currentClass = 0;
+	private byte currentClass = 0;
 	/** array of lists of Rois for each class */
-	private List<FloatPolygon> [] objectsInEachClass = new ArrayList[MAX_NUM_CLASSES];
+	private List<Point[]> [] objectsInEachClass = new ArrayList[MAX_NUM_CLASSES];
 	/** overlay to display the objects for each class */
 	private Overlay overlay;
 	/** overlay to display the objects for each class */
 	private Overlay markersOverlay;
 	/** image to display on the GUI, it includes the painted rois */
 	private ImagePlus displayImage;
-	/** LUT defined for the original image */
-	//private LUT[] originalLUT;
 	/** channel displayed */
-	private int currentDisplayedChannel = -1;
+	private byte currentDisplayedChannel = -1;
 	/** GUI window */
 	private CustomWindow win;
 	/** flag for rois **/
-	private int[][][] roiFlag;
+	private short[][][] roiFlag;
 	/** flag for display mode **/
-	private int displayFlag = 0;
+	private byte displayFlag = 0;
 	/** mouse panning */
 	private boolean mousePanning = false;
 	
@@ -126,9 +141,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 	/** pattern for channel currently annotated **/
 	private int currentPattern = -1;
 	/** array of lists of positively marked Rois for each channel */
-	private List<Integer> [][] positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
+	private List<Short> [][] positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
 	/** array of lists of Rois for each class */
-	private List<FloatPolygon> [][] objectsForEachMarkerAndEachPattern = new ArrayList[MAX_NUM_MARKERS][4];
 	
 	/** nuclei annotation mode button */
 	private JRadioButton nucleiAnnotationButton;
@@ -155,23 +169,23 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private final Color[] colors = new Color[]{Color.red, Color.green, Color.blue, Color.yellow, Color.magenta, Color.cyan, Color.orange, Color.pink, Color.black, Color.gray, Color.white};
 
 	/** color indices for classes */
-	private int[] classColors = new int[]{0, -1, -1, -1, -1};
+	private byte[] classColors = new byte[]{0, -1, -1, -1, -1};
 	/** color indices for markers */
-	private int[][] markerColors = new int[][]{{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7}};
+	private byte[][] markerColors = new byte[][]{{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7},{4, 5, 6, 7}};
 	/** cell compartment index for markers: 0 -> nuclear, 1 -> membranar, 2 -> cytoplasmic */
-	private int[] markerCellcompartment = new int[]{0,0,0,0,0,0,0,0,0,0};
-
-	//private LUT overlayLUT;
-
+	private byte[] markerCellcompartment = new byte[]{0,0,0,0,0,0,0};
+	/** channel to be thresholded */
+	private byte[] channelForMarker = new byte[]{-1,-1,-1,-1,-1,-1,-1};
+	/** thresholds */
+	private int[][] thresholdForMarker = new int[][]{{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1}};
 	/** current number of classes */
-	private int numOfClasses = 1;
+	private byte numOfClasses = 1;
 	/** current number of markers */
-	private int numOfMarkers = 0;
+	private byte numOfMarkers = 0;
 	/** current number of channels */
-	private int numOfChannels = 1;
-	
+	private byte numOfChannels = 1;
 	/** chosen channel for marker thresholding*/
-	private int chosenChannel = 0;
+	private byte chosenChannel = 0;
 	
 	/** add class */
 	private JButton addClassButton;
@@ -193,10 +207,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JButton class3RemoveButton;
 	private JButton class4RemoveButton;
 	private JButton class5RemoveButton;
-	/** buttons to analyze each independent class */
+	/** button to filter nuclei */
+	//private JButton filterNucleiButton;
+	/** button to analyze each independent class */
 	private JButton analyzeClassesButton;
+	/** button to batch analyze each independent class */
+	private JButton batchClassesMeasurementsButton;
 	/** button to visualize image with overlays for figure/presentation */
 	private JButton classSnapshotButton;
+	
 	
 	/** buttons to visualize each independent channel or all channels */
 	private JRadioButton visualizeChannel1onlyButton1;
@@ -206,9 +225,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JRadioButton visualizeChannel5onlyButton1;
 	private JRadioButton visualizeChannel6onlyButton1;
 	private JRadioButton visualizeChannel7onlyButton1;
-	private JRadioButton visualizeChannel8onlyButton1;
-	private JRadioButton visualizeChannel9onlyButton1;
-	private JRadioButton visualizeChannel10onlyButton1;
 	private JRadioButton visualizeChannel1Button1;
 	private JRadioButton visualizeChannel2Button1;
 	private JRadioButton visualizeChannel3Button1;
@@ -216,9 +232,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JRadioButton visualizeChannel5Button1;
 	private JRadioButton visualizeChannel6Button1;
 	private JRadioButton visualizeChannel7Button1;
-	private JRadioButton visualizeChannel8Button1;
-	private JRadioButton visualizeChannel9Button1;
-	private JRadioButton visualizeChannel10Button1;
 	private JRadioButton visualizeAllChannelsButton1;
 	private JRadioButton visualizeChannel1onlyButton2;
 	private JRadioButton visualizeChannel2onlyButton2;
@@ -227,9 +240,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JRadioButton visualizeChannel5onlyButton2;
 	private JRadioButton visualizeChannel6onlyButton2;
 	private JRadioButton visualizeChannel7onlyButton2;
-	private JRadioButton visualizeChannel8onlyButton2;
-	private JRadioButton visualizeChannel9onlyButton2;
-	private JRadioButton visualizeChannel10onlyButton2;
 	private JRadioButton visualizeChannel1Button2;
 	private JRadioButton visualizeChannel2Button2;
 	private JRadioButton visualizeChannel3Button2;
@@ -237,14 +247,14 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JRadioButton visualizeChannel5Button2;
 	private JRadioButton visualizeChannel6Button2;
 	private JRadioButton visualizeChannel7Button2;
-	private JRadioButton visualizeChannel8Button2;
-	private JRadioButton visualizeChannel9Button2;
-	private JRadioButton visualizeChannel10Button2;
 	private JRadioButton visualizeAllChannelsButton2;
 	
 	/** buttons to analyze each independent channel */
-	/** add class */
+	/** add marker */
 	private JButton addMarkerButton;
+	/** batch */
+	private JButton batchMarkerButton;
+	
 	/** radio buttons for selecting classes */
 	private JRadioButton marker1Button;
 	private JButton marker1ColorButton;
@@ -295,30 +305,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private JRadioButton marker7Pattern2Button;
 	private JRadioButton marker7Pattern3Button;
 	private JRadioButton marker7Pattern4Button;
-	private JRadioButton marker8Button;
-	private JButton marker8ColorButton;
-	private JButton marker8RemoveButton;
-	private JRadioButton marker8Pattern1Button;
-	private JRadioButton marker8Pattern2Button;
-	private JRadioButton marker8Pattern3Button;
-	private JRadioButton marker8Pattern4Button;
-	private JRadioButton marker9Button;
-	private JButton marker9ColorButton;
-	private JButton marker9RemoveButton;
-	private JRadioButton marker9Pattern1Button;
-	private JRadioButton marker9Pattern2Button;
-	private JRadioButton marker9Pattern3Button;
-	private JRadioButton marker9Pattern4Button;
-	private JRadioButton marker10Button;
-	private JButton marker10ColorButton;
-	private JButton marker10RemoveButton;
-	private JRadioButton marker10Pattern1Button;
-	private JRadioButton marker10Pattern2Button;
-	private JRadioButton marker10Pattern3Button;
-	private JRadioButton marker10Pattern4Button;
 	
 	/** buttons to analyze nuclei markers */
 	private JButton analyzeMarkerButton;
+	/** button to batch analyze nuclei markers  */
+	private JButton batchMarkerMeasurementsButton;
 	/** button to visualize image with overlays for figure/presentation */
 	private JButton markerSnapshotButton;
 	
@@ -332,7 +323,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private final ExecutorService exec = Executors.newFixedThreadPool(1);
 	
 	/** variables needed to merge objects */
-	private int firstObjectToMerge_class,firstObjectToMerge_classId,firstObjectToMerge_overlayId;
+	private short firstObjectToMerge_class,firstObjectToMerge_classId,firstObjectToMerge_overlayId;
 	
 	/** color buttons for classes */
 	private JRadioButton redCheck;
@@ -395,12 +386,22 @@ public class Annotater<T extends RealType<T>> implements Command {
 	
 	/** slider bars for marker thresholding */
 	private JSlider intensityThresholdingScrollBar;
+	private JTextArea intensityThresholdingTextArea;
+	private JButton setIntensityThresholdButton;
 	private JSlider areaThresholdingScrollBar;
-	/** ok and cancel buttons for marer thresholding */
+	private JTextArea areaThresholdingTextArea;
+	private JButton setAreaThresholdButton;
+	/** ok and cancel buttons for thresholding */
 	private JButton okMarkerButton;
 	private JButton cancelMarkerButton;
 	/** variable used for marker thresholds */
-	int[][] intensityThresholds;
+	short[][] intensityThresholds;
+	/** folder for batch processing */
+	private String imageFolder = new String();
+	private String segmentationFolder = new String();
+	private String markerFolder = new String();
+	private String measurementsFolder = new String();
+	
 	
 	/**
 	 * Basic constructor
@@ -444,8 +445,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 		class4RemoveButton = new JButton("Remove");
 		class5RemoveButton = new JButton("Remove");
 		
+		//filterNucleiButton = new JButton("Filter nuclei");
 		analyzeClassesButton = new JButton("Measurements");
-		
+		batchClassesMeasurementsButton = new JButton("Batch");
 		classSnapshotButton = new JButton("Snapshot");
 		
 		visualizeChannel1onlyButton1 = new JRadioButton("Channel1 only");
@@ -455,9 +457,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton1 = new JRadioButton("Channel5 only");
 		visualizeChannel6onlyButton1 = new JRadioButton("Channel6 only");
 		visualizeChannel7onlyButton1 = new JRadioButton("Channel7 only");
-		visualizeChannel8onlyButton1 = new JRadioButton("Channel8 only");
-		visualizeChannel9onlyButton1 = new JRadioButton("Channel9 only");
-		visualizeChannel10onlyButton1 = new JRadioButton("Channel10 only");
 		visualizeChannel1Button1 = new JRadioButton("Channel1");
 		visualizeChannel2Button1 = new JRadioButton("Channel2");
 		visualizeChannel3Button1 = new JRadioButton("Channel3");
@@ -465,9 +464,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5Button1 = new JRadioButton("Channel5");
 		visualizeChannel6Button1 = new JRadioButton("Channel6");
 		visualizeChannel7Button1 = new JRadioButton("Channel7");
-		visualizeChannel8Button1 = new JRadioButton("Channel8");
-		visualizeChannel9Button1 = new JRadioButton("Channel9");
-		visualizeChannel10Button1 = new JRadioButton("Channel10");
 		visualizeAllChannelsButton1 = new JRadioButton("All channels");
 		visualizeChannel1onlyButton2 = new JRadioButton("Channel1 only");
 		visualizeChannel2onlyButton2 = new JRadioButton("Channel2 only");
@@ -476,9 +472,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton2 = new JRadioButton("Channel5 only");
 		visualizeChannel6onlyButton2 = new JRadioButton("Channel6 only");
 		visualizeChannel7onlyButton2 = new JRadioButton("Channel7 only");
-		visualizeChannel8onlyButton2 = new JRadioButton("Channel8 only");
-		visualizeChannel9onlyButton2 = new JRadioButton("Channel9 only");
-		visualizeChannel10onlyButton2 = new JRadioButton("Channel10 only");
 		visualizeChannel1Button2 = new JRadioButton("Channel1");
 		visualizeChannel2Button2 = new JRadioButton("Channel2");
 		visualizeChannel3Button2 = new JRadioButton("Channel3");
@@ -486,12 +479,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5Button2 = new JRadioButton("Channel5");
 		visualizeChannel6Button2 = new JRadioButton("Channel6");
 		visualizeChannel7Button2 = new JRadioButton("Channel7");
-		visualizeChannel8Button2 = new JRadioButton("Channel8");
-		visualizeChannel9Button2 = new JRadioButton("Channel9");
-		visualizeChannel10Button2 = new JRadioButton("Channel10");
 		visualizeAllChannelsButton2 = new JRadioButton("All channels");
 		
-		addMarkerButton = new JButton("Add new marker");;
+		addMarkerButton = new JButton("Add new marker");
+		batchMarkerButton = new JButton("Batch");
 		marker1Button = new JRadioButton("Marker1");
 		marker1ColorButton = new JButton("Color");
 		marker1RemoveButton = new JButton("Remove");
@@ -541,29 +532,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 		marker7Pattern2Button = new JRadioButton("P2");
 		marker7Pattern3Button = new JRadioButton("P3");
 		marker7Pattern4Button = new JRadioButton("P4");
-		marker8Button = new JRadioButton("Marker8");
-		marker8ColorButton = new JButton("Color");
-		marker8RemoveButton = new JButton("Remove");
-		marker8Pattern1Button = new JRadioButton("P1");
-		marker8Pattern2Button = new JRadioButton("P2");
-		marker8Pattern3Button = new JRadioButton("P3");
-		marker8Pattern4Button = new JRadioButton("P4");
-		marker9Button = new JRadioButton("Marker9");
-		marker9ColorButton = new JButton("Color");
-		marker9RemoveButton = new JButton("Remove");
-		marker9Pattern1Button = new JRadioButton("P1");
-		marker9Pattern2Button = new JRadioButton("P2");
-		marker9Pattern3Button = new JRadioButton("P3");
-		marker9Pattern4Button = new JRadioButton("P4");
-		marker10Button = new JRadioButton("Marker10");
-		marker10ColorButton = new JButton("Color");
-		marker10RemoveButton = new JButton("Remove");
-		marker10Pattern1Button = new JRadioButton("P1");
-		marker10Pattern2Button = new JRadioButton("P2");
-		marker10Pattern3Button = new JRadioButton("P3");
-		marker10Pattern4Button = new JRadioButton("P4");
 		
 		analyzeMarkerButton = new JButton("Measurements");
+		batchMarkerMeasurementsButton = new JButton("Batch");
 		markerSnapshotButton = new JButton("Snapshot");
 		loadButton1 = new JButton("Load");
 		saveButton1 = new JButton("Save");
@@ -575,12 +546,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 		roiListener = new RoiListener();
 		keyListener = new KeyActions();
 		
-		objectsInEachClass[0] = new ArrayList<FloatPolygon>();
+		objectsInEachClass[0] = new ArrayList<Point[]>();
 		firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
 		
 		for(int j = 0; j < 4; j++) {
-			positiveNucleiForEachMarker[0][j] = new ArrayList<Integer>();
-			objectsForEachMarkerAndEachPattern[0][j] = new ArrayList<FloatPolygon>();
+			positiveNucleiForEachMarker[0][j] = new ArrayList<Short>();
 		}
 	
 		redCheck = new JRadioButton("Red");
@@ -641,7 +611,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 		whiteCheck4 = new JRadioButton("White");
 		
 		intensityThresholdingScrollBar = new JSlider(0, 100, 0);
+		intensityThresholdingTextArea = new JTextArea();
+		setIntensityThresholdButton = new JButton("Set threshold");
 		areaThresholdingScrollBar = new JSlider(0, 100, 35);
+		areaThresholdingTextArea = new JTextArea();
+		setAreaThresholdButton = new JButton("Set threshold");
 		okMarkerButton = new JButton("Ok");
 		cancelMarkerButton = new JButton("Cancel");
 	}
@@ -649,81 +623,156 @@ public class Annotater<T extends RealType<T>> implements Command {
 	@Override
 	public void run() {
 
-		// disable the menu, to turn off ctrl+key combos
-		/*for (int m = 0; m < Menus.getMenuBar().getMenuCount(); m++) {
-			Menus.getMenuBar().getMenu(m).setEnabled(false);
-		}*/
-		
-		if (null == WindowManager.getCurrentImage()) 
-		{
-			displayImage = IJ.openImage();
-			if (null == displayImage) return; // user canceled open dialog
-		}
-		else 		
-		{
-			displayImage = new ImagePlus("Annotater",WindowManager.getCurrentImage().getProcessor().duplicate());
-		}
-		
-		int[] dims = displayImage.getDimensions();
-		
-		if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
-			ImageConverter ic = new ImageConverter(displayImage);
-			ic.convertToRGB();
-		}
-		if(displayImage.getType()==4) {
-			displayImage = CompositeConverter.makeComposite(displayImage);
-			dims = displayImage.getDimensions();
-		}
-		if(dims[2]==1) {
-			if((dims[3]>1)&&(dims[4]==1)) {
-				displayImage = HyperStackConverter.toHyperStack(displayImage, dims[3], 1, 1);
-			}
-			if((dims[4]>1)&&(dims[3]==1)) {
-				displayImage = HyperStackConverter.toHyperStack(displayImage, dims[4], 1, 1);
-			}
-			dims = displayImage.getDimensions();
-		}
+		if (IJ.macroRunning()) {
+			String macroParameters = Macro.getOptions();
 			
-		numOfChannels = dims[2];
-		
-		if(numOfChannels>10) {
-			IJ.showMessage("Too many channels", "Images cannot exceed 10 channels");
-			return;
-		}
-		if((dims[3]>1)||(dims[4]>1)) {
-			IJ.showMessage("2D image", "Only 2D multi-channel images are accepted");
-			return;
-		}
-		//originalLUT = displayImage.getLuts();
-		
-		roiFlag = new int [displayImage.getWidth()][displayImage.getHeight()][3];
-		for(int y=0; y<displayImage.getHeight(); y++)
-		{
-			for(int x=0; x<displayImage.getWidth(); x++)
-			{
-				roiFlag[x][y][0] = -1;
-				roiFlag[x][y][1] = -1;
-				roiFlag[x][y][2] = -1;
+			Macro.setOptions(macroParameters);
+			String[] parameters = macroParameters.split(" ");
+			
+			String parameter1, parameter2;
+			if(parameters.length==2) {
+				parameter1 = parameters[0].split("=")[1];
+				parameter2 = parameters[1].split("=")[1];
 			}
+			else {
+				String[] parameter1_tmp1, parameter1_tmp2, parameter2_tmp1, parameter2_tmp2;
+				parameter1_tmp1 = parameters[1].split("=");
+				parameter1_tmp2 = parameter1_tmp1[1].split("\\[");
+				parameter1 = parameter1_tmp2[1].split("]")[0];
+				parameter2_tmp1 = parameters[2].split("=");
+				parameter2_tmp2 = parameter2_tmp1[1].split("\\[");
+				parameter2 = parameter2_tmp2[1].split("]")[0];
+			}
+			 
+			Opener opener = new Opener();
+			displayImage = opener.openImage(parameter1);
+			
+			int[] dims = displayImage.getDimensions();
+			
+			if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
+				ImageConverter ic = new ImageConverter(displayImage);
+				ic.convertToRGB();
+			}
+			if(displayImage.getType()==4) {
+				displayImage = CompositeConverter.makeComposite(displayImage);
+				dims = displayImage.getDimensions();
+			}
+			if(dims[2]==1) {
+				if((dims[3]>1)&&(dims[4]==1)) {
+					displayImage = HyperStackConverter.toHyperStack(displayImage, dims[3], 1, 1);
+				}
+				if((dims[4]>1)&&(dims[3]==1)) {
+					displayImage = HyperStackConverter.toHyperStack(displayImage, dims[4], 1, 1);
+				}
+				dims = displayImage.getDimensions();
+			}
+				
+			numOfChannels = (byte)dims[2];
+			
+			if(numOfChannels>7) {
+				IJ.showMessage("Too many channels", "Images cannot exceed 7 channels");
+				return;
+			}
+			if((dims[3]>1)||(dims[4]>1)) {
+				IJ.showMessage("2D image", "Only 2D multi-channel images are accepted");
+				return;
+			}
+			//originalLUT = displayImage.getLuts();
+			
+			roiFlag = new short [displayImage.getWidth()][displayImage.getHeight()][3];
+			for(int y=0; y<displayImage.getHeight(); y++)
+			{
+				for(int x=0; x<displayImage.getWidth(); x++)
+				{
+					roiFlag[x][y][0] = -1;
+					roiFlag[x][y][1] = -1;
+					roiFlag[x][y][2] = -1;
+				}
+			}
+			
+			//Build GUI
+			SwingUtilities.invokeLater(
+					new Runnable() {
+						public void run() {
+							win = new CustomWindow(displayImage);
+							win.pack();
+						}
+					});
+			
+			ImagePlus segmentedImage = opener.openImage(parameter2);
+			loadNucleiSegmentations(segmentedImage);
+        }
+		else {
+			if (null == WindowManager.getCurrentImage()) 
+			{
+				displayImage = IJ.openImage();
+				if (null == displayImage) return; // user canceled open dialog
+			}
+			else 		
+			{
+				displayImage = new ImagePlus("Annotater",WindowManager.getCurrentImage().getProcessor().duplicate());
+			}
+		
+			int[] dims = displayImage.getDimensions();
+
+			if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
+				ImageConverter ic = new ImageConverter(displayImage);
+				ic.convertToRGB();
+			}
+			if(displayImage.getType()==4) {
+				displayImage = CompositeConverter.makeComposite(displayImage);
+				dims = displayImage.getDimensions();
+			}
+			if(dims[2]==1) {
+				if((dims[3]>1)&&(dims[4]==1)) {
+					displayImage = HyperStackConverter.toHyperStack(displayImage, dims[3], 1, 1);
+				}
+				if((dims[4]>1)&&(dims[3]==1)) {
+					displayImage = HyperStackConverter.toHyperStack(displayImage, dims[4], 1, 1);
+				}
+				dims = displayImage.getDimensions();
+			}
+
+			numOfChannels = (byte)dims[2];
+
+			if(numOfChannels>7) {
+				IJ.showMessage("Too many channels", "Images cannot exceed 7 channels");
+				return;
+			}
+			if((dims[3]>1)||(dims[4]>1)) {
+				IJ.showMessage("2D image", "Only 2D multi-channel images are accepted");
+				return;
+			}
+			//originalLUT = displayImage.getLuts();
+
+			roiFlag = new short [displayImage.getWidth()][displayImage.getHeight()][3];
+			for(int y=0; y<displayImage.getHeight(); y++)
+			{
+				for(int x=0; x<displayImage.getWidth(); x++)
+				{
+					roiFlag[x][y][0] = -1;
+					roiFlag[x][y][1] = -1;
+					roiFlag[x][y][2] = -1;
+				}
+			}
+
+			//Build GUI
+			SwingUtilities.invokeLater(
+					new Runnable() {
+						public void run() {
+							win = new CustomWindow(displayImage);
+							win.pack();
+						}
+					});
 		}
-		
-		//Build GUI
-		SwingUtilities.invokeLater(
-				new Runnable() {
-					public void run() {
-						win = new CustomWindow(displayImage);
-						win.pack();
-					}
-				});
-		
 		
 	}
 
 	/**
 	 * Roi color changing functions
 	 */
-	int getSelectedClassColor() {
-		int colorCode = 0;
+	byte getSelectedClassColor() {
+		byte colorCode = 0;
 		if(redCheck.isSelected()) {colorCode = 0;}
 		if(greenCheck.isSelected()) {colorCode = 1;}
 		if(blueCheck.isSelected()) {colorCode = 2;}
@@ -738,9 +787,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 		return colorCode;
 	}
 	void updateRoiColor(int consideredClass) {
-		int selectedColor = getSelectedClassColor(),alreadyUsedColorClass=-1;
+		byte selectedColor = getSelectedClassColor(),alreadyUsedColorClass=-1;
 		if(selectedColor!=classColors[consideredClass]) {
-			for(int i=0;i<classColors.length;i++) {
+			for(byte i=0;i<classColors.length;i++) {
 				if(selectedColor==classColors[i]) {
 					alreadyUsedColorClass = i;
 				}
@@ -758,8 +807,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 	/**
 	 * Marker color changing functions
 	 */
-	int getPattern1ClassColor() {
-		int colorCode = 0;
+	byte getPattern1ClassColor() {
+		byte colorCode = 0;
 		if(redCheck1.isSelected()) {colorCode = 0;}
 		if(greenCheck1.isSelected()) {colorCode = 1;}
 		if(blueCheck1.isSelected()) {colorCode = 2;}
@@ -773,8 +822,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		if(whiteCheck1.isSelected()) {colorCode = 10;}
 		return colorCode;
 	}
-	int getPattern2ClassColor() {
-		int colorCode = 0;
+	byte getPattern2ClassColor() {
+		byte colorCode = 0;
 		if(redCheck2.isSelected()) {colorCode = 0;}
 		if(greenCheck2.isSelected()) {colorCode = 1;}
 		if(blueCheck2.isSelected()) {colorCode = 2;}
@@ -788,8 +837,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		if(whiteCheck2.isSelected()) {colorCode = 10;}
 		return colorCode;
 	}
-	int getPattern3ClassColor() {
-		int colorCode = 0;
+	byte getPattern3ClassColor() {
+		byte colorCode = 0;
 		if(redCheck3.isSelected()) {colorCode = 0;}
 		if(greenCheck3.isSelected()) {colorCode = 1;}
 		if(blueCheck3.isSelected()) {colorCode = 2;}
@@ -803,8 +852,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		if(whiteCheck3.isSelected()) {colorCode = 10;}
 		return colorCode;
 	}
-	int getPattern4ClassColor() {
-		int colorCode = 0;
+	byte getPattern4ClassColor() {
+		byte colorCode = 0;
 		if(redCheck4.isSelected()) {colorCode = 0;}
 		if(greenCheck4.isSelected()) {colorCode = 1;}
 		if(blueCheck4.isSelected()) {colorCode = 2;}
@@ -819,7 +868,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 		return colorCode;
 	}
 	void updatePatternColor(int consideredMarker) {
-		int colorPattern1 = getPattern1ClassColor(), colorPattern2 = getPattern2ClassColor(), colorPattern3 = getPattern3ClassColor(), colorPattern4 = getPattern4ClassColor();
+		byte colorPattern1 = getPattern1ClassColor(), colorPattern2 = getPattern2ClassColor(), colorPattern3 = getPattern3ClassColor(), colorPattern4 = getPattern4ClassColor();
 		if(colorPattern1==colorPattern2) {
 			IJ.showMessage("Patterns 1 and 2 cannot have the same color");
 		}
@@ -952,134 +1001,101 @@ public class Annotater<T extends RealType<T>> implements Command {
 					else if(e.getSource() == analyzeClassesButton){
 						classMeasurements();
 					}
+					/*else if(e.getSource() == filterNucleiButton){
+						addFilterWindow();
+					}*/
 					else if(e.getSource() == classSnapshotButton){
 						takeClassSnapshot();
 					}
 					else if(e.getSource() == visualizeChannel1Button1){
-						updateVisualizeChannelButtons1(0);
+						updateVisualizeChannelButtons1((byte)0);
 					}
 					else if(e.getSource() == visualizeChannel2Button1){
-						updateVisualizeChannelButtons1(1);
+						updateVisualizeChannelButtons1((byte)1);
 					}
 					else if(e.getSource() == visualizeChannel3Button1){
-						updateVisualizeChannelButtons1(2);
+						updateVisualizeChannelButtons1((byte)2);
 					}
 					else if(e.getSource() == visualizeChannel4Button1){
-						updateVisualizeChannelButtons1(3);
+						updateVisualizeChannelButtons1((byte)3);
 					}
 					else if(e.getSource() == visualizeChannel5Button1){
-						updateVisualizeChannelButtons1(4);
+						updateVisualizeChannelButtons1((byte)4);
 					}
 					else if(e.getSource() == visualizeChannel6Button1){
-						updateVisualizeChannelButtons1(5);
+						updateVisualizeChannelButtons1((byte)5);
 					}
 					else if(e.getSource() == visualizeChannel7Button1){
-						updateVisualizeChannelButtons1(6);
-					}
-					else if(e.getSource() == visualizeChannel8Button1){
-						updateVisualizeChannelButtons1(7);
-					}
-					else if(e.getSource() == visualizeChannel9Button1){
-						updateVisualizeChannelButtons1(8);
-					}
-					else if(e.getSource() == visualizeChannel10Button1){
-						updateVisualizeChannelButtons1(9);
+						updateVisualizeChannelButtons1((byte)6);
 					}
 					else if(e.getSource() == visualizeChannel1onlyButton1){
-						updateVisualizeChannelButtons1(10);
+						updateVisualizeChannelButtons1((byte)10);
 					}
 					else if(e.getSource() == visualizeChannel2onlyButton1){
-						updateVisualizeChannelButtons1(11);
+						updateVisualizeChannelButtons1((byte)11);
 					}
 					else if(e.getSource() == visualizeChannel3onlyButton1){
-						updateVisualizeChannelButtons1(12);
+						updateVisualizeChannelButtons1((byte)12);
 					}
 					else if(e.getSource() == visualizeChannel4onlyButton1){
-						updateVisualizeChannelButtons1(13);
+						updateVisualizeChannelButtons1((byte)13);
 					}
 					else if(e.getSource() == visualizeChannel5onlyButton1){
-						updateVisualizeChannelButtons1(14);
+						updateVisualizeChannelButtons1((byte)14);
 					}
 					else if(e.getSource() == visualizeChannel6onlyButton1){
-						updateVisualizeChannelButtons1(15);
+						updateVisualizeChannelButtons1((byte)15);
 					}
 					else if(e.getSource() == visualizeChannel7onlyButton1){
-						updateVisualizeChannelButtons1(16);
-					}
-					else if(e.getSource() == visualizeChannel8onlyButton1){
-						updateVisualizeChannelButtons1(17);
-					}
-					else if(e.getSource() == visualizeChannel9onlyButton1){
-						updateVisualizeChannelButtons1(18);
-					}
-					else if(e.getSource() == visualizeChannel10onlyButton1){
-						updateVisualizeChannelButtons1(19);
+						updateVisualizeChannelButtons1((byte)16);
 					}
 					else if(e.getSource() == visualizeAllChannelsButton1){
-						updateVisualizeChannelButtons1(20);
+						updateVisualizeChannelButtons1((byte)20);
 					}
 					else if(e.getSource() == visualizeChannel1Button2){
-						updateVisualizeChannelButtons2(0);
+						updateVisualizeChannelButtons2((byte)0);
 					}
 					else if(e.getSource() == visualizeChannel2Button2){
-						updateVisualizeChannelButtons2(1);
+						updateVisualizeChannelButtons2((byte)1);
 					}
 					else if(e.getSource() == visualizeChannel3Button2){
-						updateVisualizeChannelButtons2(2);
+						updateVisualizeChannelButtons2((byte)2);
 					}
 					else if(e.getSource() == visualizeChannel4Button2){
-						updateVisualizeChannelButtons2(3);
+						updateVisualizeChannelButtons2((byte)3);
 					}
 					else if(e.getSource() == visualizeChannel5Button2){
-						updateVisualizeChannelButtons2(4);
+						updateVisualizeChannelButtons2((byte)4);
 					}
 					else if(e.getSource() == visualizeChannel6Button2){
-						updateVisualizeChannelButtons2(5);
+						updateVisualizeChannelButtons2((byte)5);
 					}
 					else if(e.getSource() == visualizeChannel7Button2){
-						updateVisualizeChannelButtons2(6);
-					}
-					else if(e.getSource() == visualizeChannel8Button2){
-						updateVisualizeChannelButtons2(7);
-					}
-					else if(e.getSource() == visualizeChannel9Button2){
-						updateVisualizeChannelButtons2(8);
-					}
-					else if(e.getSource() == visualizeChannel10Button2){
-						updateVisualizeChannelButtons2(9);
+						updateVisualizeChannelButtons2((byte)6);
 					}
 					else if(e.getSource() == visualizeChannel1onlyButton2){
-						updateVisualizeChannelButtons2(10);
+						updateVisualizeChannelButtons2((byte)10);
 					}
 					else if(e.getSource() == visualizeChannel2onlyButton2){
-						updateVisualizeChannelButtons2(11);
+						updateVisualizeChannelButtons2((byte)11);
 					}
 					else if(e.getSource() == visualizeChannel3onlyButton2){
-						updateVisualizeChannelButtons2(12);
+						updateVisualizeChannelButtons2((byte)12);
 					}
 					else if(e.getSource() == visualizeChannel4onlyButton2){
-						updateVisualizeChannelButtons2(13);
+						updateVisualizeChannelButtons2((byte)13);
 					}
 					else if(e.getSource() == visualizeChannel5onlyButton2){
-						updateVisualizeChannelButtons2(14);
+						updateVisualizeChannelButtons2((byte)14);
 					}
 					else if(e.getSource() == visualizeChannel6onlyButton2){
-						updateVisualizeChannelButtons2(15);
+						updateVisualizeChannelButtons2((byte)15);
 					}
 					else if(e.getSource() == visualizeChannel7onlyButton2){
-						updateVisualizeChannelButtons2(16);
-					}
-					else if(e.getSource() == visualizeChannel8onlyButton2){
-						updateVisualizeChannelButtons2(17);
-					}
-					else if(e.getSource() == visualizeChannel9onlyButton2){
-						updateVisualizeChannelButtons2(18);
-					}
-					else if(e.getSource() == visualizeChannel10onlyButton2){
-						updateVisualizeChannelButtons2(19);
+						updateVisualizeChannelButtons2((byte)16);
 					}
 					else if(e.getSource() == visualizeAllChannelsButton2){
-						updateVisualizeChannelButtons2(20);
+						updateVisualizeChannelButtons2((byte)20);
 					}
 					else if(e.getSource() == addMarkerButton){
 						if(objectsInEachClass[0].size()==0) {
@@ -1088,23 +1104,48 @@ public class Annotater<T extends RealType<T>> implements Command {
 						else {
 							initializeMarkerButtons();
 							removeMarkersFromOverlay();
-							addNewMarker();
-							boolean ok = addMarkerWindow();
-							if(!ok) {deleteMarker(numOfMarkers-1);}
-							else {updateAnnotateMarker(numOfMarkers-1);}
+							boolean okNbMarkers = addNewMarker();
+							if(okNbMarkers) {
+								boolean ok = addMarkerWindow();
+								if(!ok) {deleteMarker(numOfMarkers-1);}
+								else {updateAnnotateMarker(numOfMarkers-1);}
+							}
 						}
+					}
+					else if(e.getSource() == setIntensityThresholdButton){
+						addIntensityThresholdingWindow();
+					}
+					else if(e.getSource() == setAreaThresholdButton){
+						addAreaThresholdingWindow();
 					}
 					else if(e.getSource() == okMarkerButton){
 						updateModeRadioButtons(1);
 						updateAnnotateMarker(numOfMarkers-1);
 						okMarkerButton.removeActionListener(listener);
 						cancelMarkerButton.removeActionListener(listener);
+						setIntensityThresholdButton.removeActionListener(listener);
+						setAreaThresholdButton.removeActionListener(listener);
+						for( ChangeListener al : intensityThresholdingScrollBar.getChangeListeners() ) {intensityThresholdingScrollBar.removeChangeListener( al );}
+						for( ChangeListener al : areaThresholdingScrollBar.getChangeListeners() ) {areaThresholdingScrollBar.removeChangeListener( al );}
 					}
 					else if(e.getSource() == cancelMarkerButton){
 						currentMode = 1;
 						deleteMarker(numOfMarkers-1);
 						okMarkerButton.removeActionListener(listener);
 						cancelMarkerButton.removeActionListener(listener);
+						setIntensityThresholdButton.removeActionListener(listener);
+						setAreaThresholdButton.removeActionListener(listener);
+						for( ChangeListener al : intensityThresholdingScrollBar.getChangeListeners() ) {intensityThresholdingScrollBar.removeChangeListener( al );}
+						for( ChangeListener al : areaThresholdingScrollBar.getChangeListeners() ) {areaThresholdingScrollBar.removeChangeListener( al );}
+					}
+					else if(e.getSource() == batchMarkerButton) {
+						batchMarker();
+					}
+					else if(e.getSource() == batchClassesMeasurementsButton) {
+						batchMeasurements(0);
+					}
+					else if(e.getSource() == batchMarkerMeasurementsButton) {
+						batchMeasurements(1);
 					}
 					else if(e.getSource() == marker1Button){
 						updateAnnotateMarker(0);
@@ -1126,15 +1167,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					else if(e.getSource() == marker7Button){
 						updateAnnotateMarker(6);
-					}
-					else if(e.getSource() == marker8Button){
-						updateAnnotateMarker(7);
-					}
-					else if(e.getSource() == marker9Button){
-						updateAnnotateMarker(8);
-					}
-					else if(e.getSource() == marker10Button){
-						updateAnnotateMarker(9);
 					}
 					else if(e.getSource() == marker1ColorButton){
 						boolean ok = updatePatternColorsWindow(0);
@@ -1184,27 +1216,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					else if(e.getSource() == marker7RemoveButton){
 						removeMarker(6);
-					}
-					else if(e.getSource() == marker8ColorButton){
-						boolean ok = updatePatternColorsWindow(7);
-						if(ok) {updatePatternColor(7);}
-					}
-					else if(e.getSource() == marker8RemoveButton){
-						removeMarker(7);
-					}
-					else if(e.getSource() == marker9ColorButton){
-						boolean ok = updatePatternColorsWindow(8);
-						if(ok) {updatePatternColor(8);}
-					}
-					else if(e.getSource() == marker9RemoveButton){
-						removeMarker(8);
-					}
-					else if(e.getSource() == marker10ColorButton){
-						boolean ok = updatePatternColorsWindow(9);
-						if(ok) {updatePatternColor(9);}
-					}
-					else if(e.getSource() == marker10RemoveButton){
-						removeMarker(9);
 					}
 					else if(e.getSource() == marker1Pattern1Button){
 						updateAnnotateChannelPatternButtons(0);
@@ -1290,42 +1301,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					else if(e.getSource() == marker7Pattern4Button){
 						updateAnnotateChannelPatternButtons(27);
 					}
-					else if(e.getSource() == marker8Pattern1Button){
-						updateAnnotateChannelPatternButtons(28);
-					}
-					else if(e.getSource() == marker8Pattern2Button){
-						updateAnnotateChannelPatternButtons(29);
-					}
-					else if(e.getSource() == marker8Pattern3Button){
-						updateAnnotateChannelPatternButtons(30);
-					}
-					else if(e.getSource() == marker8Pattern4Button){
-						updateAnnotateChannelPatternButtons(31);
-					}
-					else if(e.getSource() == marker9Pattern1Button){
-						updateAnnotateChannelPatternButtons(32);
-					}
-					else if(e.getSource() == marker9Pattern2Button){
-						updateAnnotateChannelPatternButtons(33);
-					}
-					else if(e.getSource() == marker9Pattern3Button){
-						updateAnnotateChannelPatternButtons(34);
-					}
-					else if(e.getSource() == marker9Pattern4Button){
-						updateAnnotateChannelPatternButtons(35);
-					}
-					else if(e.getSource() == marker10Pattern1Button){
-						updateAnnotateChannelPatternButtons(36);
-					}
-					else if(e.getSource() == marker10Pattern2Button){
-						updateAnnotateChannelPatternButtons(37);
-					}
-					else if(e.getSource() == marker10Pattern3Button){
-						updateAnnotateChannelPatternButtons(38);
-					}
-					else if(e.getSource() == marker10Pattern4Button){
-						updateAnnotateChannelPatternButtons(39);
-					}
 					else if(e.getSource() == analyzeMarkerButton){
 						markerMeasurements();
 					}
@@ -1374,7 +1349,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				if (roi != null && roi.getType() == Roi.POINT && currentMode == 0) {
 					if(mergeObjectsButton.isSelected()) {mergeObjects();}
-					if(removeObjectButton.isSelected()) {removeObject();}
+					if(removeObjectButton.isSelected()) {removeObject();}//classMeasurementsForOneNucleus();}
 					if(swapObjectClassButton.isSelected()) {swapObjectClass();}
 				}
 				if (roi != null && roi.getType() == Roi.POINT && currentMode == 1) {
@@ -1487,6 +1462,14 @@ public class Annotater<T extends RealType<T>> implements Command {
 				break;
 
 			case 109:
+				IJ.run("Out [-]");
+				break;
+
+			case 61:
+				IJ.run("In [+]");
+				break;
+
+			case 45:
 				IJ.run("Out [-]");
 				break;
 
@@ -1636,33 +1619,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		marker7Pattern3Button.removeActionListener(listener);
 		marker7Pattern4Button.removeActionListener(listener);
 	}
-	public void removeMarker8ButtonFromListener() {
-		marker8Button.removeActionListener(listener);
-		marker8ColorButton.removeActionListener(listener);
-		marker8RemoveButton.removeActionListener(listener);
-		marker8Pattern1Button.removeActionListener(listener);
-		marker8Pattern2Button.removeActionListener(listener);
-		marker8Pattern3Button.removeActionListener(listener);
-		marker8Pattern4Button.removeActionListener(listener);
-	}
-	public void removeMarker9ButtonFromListener() {
-		marker9Button.removeActionListener(listener);
-		marker9ColorButton.removeActionListener(listener);
-		marker9RemoveButton.removeActionListener(listener);
-		marker9Pattern1Button.removeActionListener(listener);
-		marker9Pattern2Button.removeActionListener(listener);
-		marker9Pattern3Button.removeActionListener(listener);
-		marker9Pattern4Button.removeActionListener(listener);
-	}
-	public void removeMarker10ButtonFromListener() {
-		marker10Button.removeActionListener(listener);
-		marker10ColorButton.removeActionListener(listener);
-		marker10RemoveButton.removeActionListener(listener);
-		marker10Pattern1Button.removeActionListener(listener);
-		marker10Pattern2Button.removeActionListener(listener);
-		marker10Pattern3Button.removeActionListener(listener);
-		marker10Pattern4Button.removeActionListener(listener);
-	}
 	/**
 	 * Functions to remove marker associated buttons
 	 */
@@ -1729,33 +1685,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		marker7Pattern3Button.addActionListener(listener);
 		marker7Pattern4Button.addActionListener(listener);
 	}
-	public void addMarker8ButtonFromListener() {
-		marker8Button.addActionListener(listener);
-		marker8ColorButton.addActionListener(listener);
-		marker8RemoveButton.addActionListener(listener);
-		marker8Pattern1Button.addActionListener(listener);
-		marker8Pattern2Button.addActionListener(listener);
-		marker8Pattern3Button.addActionListener(listener);
-		marker8Pattern4Button.addActionListener(listener);
-	}
-	public void addMarker9ButtonFromListener() {
-		marker9Button.addActionListener(listener);
-		marker9ColorButton.addActionListener(listener);
-		marker9RemoveButton.addActionListener(listener);
-		marker9Pattern1Button.addActionListener(listener);
-		marker9Pattern2Button.addActionListener(listener);
-		marker9Pattern3Button.addActionListener(listener);
-		marker9Pattern4Button.addActionListener(listener);
-	}
-	public void addMarker10ButtonFromListener() {
-		marker10Button.addActionListener(listener);
-		marker10ColorButton.addActionListener(listener);
-		marker10RemoveButton.addActionListener(listener);
-		marker10Pattern1Button.addActionListener(listener);
-		marker10Pattern2Button.addActionListener(listener);
-		marker10Pattern3Button.addActionListener(listener);
-		marker10Pattern4Button.addActionListener(listener);
-	}
 	/**
 	 * Custom window to define the GUI
 	 */
@@ -1786,12 +1715,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		private JPanel marker6PatternPanel2 = new JPanel();
 		private JPanel marker7PatternPanel1 = new JPanel();
 		private JPanel marker7PatternPanel2 = new JPanel();
-		private JPanel marker8PatternPanel1 = new JPanel();
-		private JPanel marker8PatternPanel2 = new JPanel();
-		private JPanel marker9PatternPanel1 = new JPanel();
-		private JPanel marker9PatternPanel2 = new JPanel();
-		private JPanel marker10PatternPanel1 = new JPanel();
-		private JPanel marker10PatternPanel2 = new JPanel();
 		private JPanel visualizationPanel1 = new JPanel();
 		private JPanel visualizationPanel2 = new JPanel();
 		private JPanel filePanel1 = new JPanel();
@@ -1893,7 +1816,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 			analysisContraints1.gridy = 0;
 			analysisPanel1.setLayout(analysisLayout1);
 
+			//analysisPanel1.add(filterNucleiButton,analysisContraints1);
+			//analysisContraints1.gridy++;
 			analysisPanel1.add(analyzeClassesButton,analysisContraints1);
+			analysisContraints1.gridy++;
+			analysisPanel1.add(batchClassesMeasurementsButton,analysisContraints1);
 			analysisContraints1.gridy++;
 			analysisPanel1.add(classSnapshotButton,analysisContraints1);
 			analysisContraints1.gridy++;
@@ -1911,6 +1838,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 			analysisPanel2.setLayout(analysisLayout2);
 
 			analysisPanel2.add(analyzeMarkerButton, analysisConstraints2);
+			analysisConstraints2.gridy++;
+			analysisPanel2.add(batchMarkerMeasurementsButton, analysisConstraints2);
 			analysisConstraints2.gridy++;
 			analysisPanel2.add(markerSnapshotButton,analysisConstraints2);
 			analysisConstraints2.gridy++;
@@ -2202,129 +2131,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			marker7Pattern4Button.setSelected(false);
 			marker7PatternConstraints2.gridx++;
 
-			// Marker 8 pattern panel
-			marker8PatternPanel1.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker8PatternLayout1 = new GridBagLayout();
-			GridBagConstraints marker8PatternConstraints1 = new GridBagConstraints();
-			marker8PatternConstraints1.anchor = GridBagConstraints.NORTHWEST;
-			marker8PatternConstraints1.fill = GridBagConstraints.HORIZONTAL;
-			marker8PatternConstraints1.gridwidth = 1;
-			marker8PatternConstraints1.gridheight = 1;
-			marker8PatternConstraints1.gridx = 0;
-			marker8PatternConstraints1.gridy = 0;
-			marker8PatternPanel1.setLayout(marker8PatternLayout1);
-			marker8PatternPanel1.add(marker8Button);
-			marker8PatternConstraints1.gridx++;
-			marker8PatternPanel1.add(marker8ColorButton);
-			marker8PatternConstraints1.gridx++;
-			marker8PatternPanel1.add(marker8RemoveButton);
-			
-			marker8PatternPanel2.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker8PatternLayout2 = new GridBagLayout();
-			GridBagConstraints marker8PatternConstraints2 = new GridBagConstraints();
-			marker8PatternConstraints2.anchor = GridBagConstraints.NORTHWEST;
-			marker8PatternConstraints2.fill = GridBagConstraints.HORIZONTAL;
-			marker8PatternConstraints2.gridwidth = 1;
-			marker8PatternConstraints2.gridheight = 1;
-			marker8PatternConstraints2.gridx = 0;
-			marker8PatternConstraints2.gridy = 0;
-			marker8PatternPanel2.setLayout(marker8PatternLayout2);
-
-			marker8PatternPanel2.add(marker8Pattern1Button);
-			marker8Pattern1Button.setSelected(false);
-			marker8PatternConstraints2.gridx++;
-			marker8PatternPanel2.add(marker8Pattern2Button);
-			marker8Pattern2Button.setSelected(false);
-			marker8PatternConstraints2.gridx++;
-			marker8PatternPanel2.add(marker8Pattern3Button);
-			marker8Pattern3Button.setSelected(false);
-			marker8PatternConstraints2.gridx++;
-			marker8PatternPanel2.add(marker8Pattern4Button);
-			marker8Pattern4Button.setSelected(false);
-			marker8PatternConstraints2.gridx++;
-
-			// Marker 9 pattern panel
-			marker9PatternPanel1.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker9PatternLayout1 = new GridBagLayout();
-			GridBagConstraints marker9PatternConstraints1 = new GridBagConstraints();
-			marker9PatternConstraints1.anchor = GridBagConstraints.NORTHWEST;
-			marker9PatternConstraints1.fill = GridBagConstraints.HORIZONTAL;
-			marker9PatternConstraints1.gridwidth = 1;
-			marker9PatternConstraints1.gridheight = 1;
-			marker9PatternConstraints1.gridx = 0;
-			marker9PatternConstraints1.gridy = 0;
-			marker9PatternPanel1.setLayout(marker9PatternLayout1);
-			marker9PatternPanel1.add(marker9Button);
-			marker9PatternConstraints1.gridx++;
-			marker9PatternPanel1.add(marker9ColorButton);
-			marker9PatternConstraints1.gridx++;
-			marker9PatternPanel1.add(marker9RemoveButton);
-
-			marker9PatternPanel2.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker9PatternLayout2 = new GridBagLayout();
-			GridBagConstraints marker9PatternConstraints2 = new GridBagConstraints();
-			marker9PatternConstraints2.anchor = GridBagConstraints.NORTHWEST;
-			marker9PatternConstraints2.fill = GridBagConstraints.HORIZONTAL;
-			marker9PatternConstraints2.gridwidth = 1;
-			marker9PatternConstraints2.gridheight = 1;
-			marker9PatternConstraints2.gridx = 0;
-			marker9PatternConstraints2.gridy = 0;
-			marker9PatternPanel2.setLayout(marker9PatternLayout2);
-
-			marker9PatternPanel2.add(marker9Pattern1Button);
-			marker9Pattern1Button.setSelected(false);
-			marker9PatternConstraints2.gridx++;
-			marker9PatternPanel2.add(marker9Pattern2Button);
-			marker9Pattern2Button.setSelected(false);
-			marker9PatternConstraints2.gridx++;
-			marker9PatternPanel2.add(marker9Pattern3Button);
-			marker9Pattern3Button.setSelected(false);
-			marker9PatternConstraints2.gridx++;
-			marker9PatternPanel2.add(marker9Pattern4Button);
-			marker9Pattern4Button.setSelected(false);
-			marker9PatternConstraints2.gridx++;
-
-			// Marker 10 pattern panel
-			marker10PatternPanel1.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker10PatternLayout1 = new GridBagLayout();
-			GridBagConstraints marker10PatternConstraints1 = new GridBagConstraints();
-			marker10PatternConstraints1.anchor = GridBagConstraints.NORTHWEST;
-			marker10PatternConstraints1.fill = GridBagConstraints.HORIZONTAL;
-			marker10PatternConstraints1.gridwidth = 1;
-			marker10PatternConstraints1.gridheight = 1;
-			marker10PatternConstraints1.gridx = 0;
-			marker10PatternConstraints1.gridy = 0;
-			marker10PatternPanel1.setLayout(marker10PatternLayout1);
-			marker10PatternPanel1.add(marker10Button);
-			marker10PatternConstraints1.gridx++;
-			marker10PatternPanel1.add(marker10ColorButton);
-			marker10PatternConstraints1.gridx++;
-			marker10PatternPanel1.add(marker10RemoveButton);
-
-			marker10PatternPanel2.setBorder(BorderFactory.createTitledBorder(""));
-			GridBagLayout marker10PatternLayout2 = new GridBagLayout();
-			GridBagConstraints marker10PatternConstraints2 = new GridBagConstraints();
-			marker10PatternConstraints2.anchor = GridBagConstraints.NORTHWEST;
-			marker10PatternConstraints2.fill = GridBagConstraints.HORIZONTAL;
-			marker10PatternConstraints2.gridwidth = 1;
-			marker10PatternConstraints2.gridheight = 1;
-			marker10PatternConstraints2.gridx = 0;
-			marker10PatternConstraints2.gridy = 0;
-			marker10PatternPanel2.setLayout(marker10PatternLayout2);
-
-			marker10PatternPanel2.add(marker10Pattern1Button);
-			marker10Pattern1Button.setSelected(false);
-			marker10PatternConstraints2.gridx++;
-			marker10PatternPanel2.add(marker10Pattern2Button);
-			marker10Pattern2Button.setSelected(false);
-			marker10PatternConstraints2.gridx++;
-			marker10PatternPanel2.add(marker10Pattern3Button);
-			marker10Pattern3Button.setSelected(false);
-			marker10PatternConstraints2.gridx++;
-			marker10PatternPanel2.add(marker10Pattern4Button);
-			marker10Pattern4Button.setSelected(false);
-			marker10PatternConstraints2.gridx++;
-
 			// Marker panel
 			markerPanel.setBorder(BorderFactory.createTitledBorder("Labels"));
 			markerConstraints.anchor = GridBagConstraints.NORTHWEST;
@@ -2335,6 +2141,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 			markerConstraints.gridy = 0;
 			markerPanel.setLayout(markerLayout);
 			markerPanel.add(addMarkerButton,markerConstraints);
+			markerConstraints.gridy++;
+			markerPanel.add(batchMarkerButton,markerConstraints);
 			markerConstraints.gridy++;
 			
 			if(numOfMarkers>0) {
@@ -2384,27 +2192,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				markerPanel.add(marker7PatternPanel1, markerConstraints);
 				markerConstraints.gridy++;
 				markerPanel.add(marker7PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-			}
-			if(numOfMarkers>7) {
-				marker8Button.setSelected(false);
-				markerPanel.add(marker8PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker8PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-			}
-			if(numOfMarkers>8) {
-				marker9Button.setSelected(false);
-				markerPanel.add(marker9PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker9PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-			}
-			if(numOfMarkers>9) {
-				marker10Button.setSelected(false);
-				markerPanel.add(marker10PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker10PatternPanel2, markerConstraints);
 				markerConstraints.gridy++;
 			}
 			
@@ -2472,29 +2259,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 				visualizationConstraints1.gridx = 0;			
 				visualizationConstraints1.gridy++;
 			}
-			if(numOfChannels>7) {
-				visualizationPanel1.add(visualizeChannel8Button1, visualizationConstraints1);
-				visualizationConstraints1.gridx++;
-				visualizationPanel1.add(visualizeChannel8onlyButton1, visualizationConstraints1);
-				visualizationConstraints1.gridx = 0;			
-				visualizationConstraints1.gridy++;
-			}
-			if(numOfChannels>8) {
-				visualizationPanel1.add(visualizeChannel9Button1, visualizationConstraints1);
-				visualizationConstraints1.gridx++;
-				visualizationPanel1.add(visualizeChannel9onlyButton1, visualizationConstraints1);
-				visualizationConstraints1.gridx = 0;			
-				visualizationConstraints1.gridy++;
-			}
-			if(numOfChannels>9) {
-				visualizationPanel1.add(visualizeChannel10Button1, visualizationConstraints1);
-				visualizationConstraints1.gridx++;
-				visualizationPanel1.add(visualizeChannel10onlyButton1, visualizationConstraints1);
-				visualizationConstraints1.gridx = 0;			
-				visualizationConstraints1.gridy++;
-			}
 			visualizationPanel1.add(visualizeAllChannelsButton1, visualizationConstraints1);
-			updateVisualizeChannelButtons1(20);
+			updateVisualizeChannelButtons1((byte)20);
 			visualizationConstraints1.gridy++;
 			visualizeAllChannelsButton1.setSelected(true);
 
@@ -2555,27 +2321,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				visualizationPanel2.add(visualizeChannel7Button2, visualizationConstraints2);
 				visualizationConstraints2.gridx++;
 				visualizationPanel2.add(visualizeChannel7onlyButton2, visualizationConstraints2);
-				visualizationConstraints2.gridx = 0;
-				visualizationConstraints2.gridy++;
-			}
-			if(numOfChannels>7) {
-				visualizationPanel2.add(visualizeChannel8Button2, visualizationConstraints2);
-				visualizationConstraints2.gridx++;
-				visualizationPanel2.add(visualizeChannel8onlyButton2, visualizationConstraints2);
-				visualizationConstraints2.gridx = 0;
-				visualizationConstraints2.gridy++;
-			}
-			if(numOfChannels>8) {
-				visualizationPanel2.add(visualizeChannel9Button2, visualizationConstraints2);
-				visualizationConstraints2.gridx++;
-				visualizationPanel2.add(visualizeChannel9onlyButton2, visualizationConstraints2);
-				visualizationConstraints2.gridx = 0;
-				visualizationConstraints2.gridy++;
-			}
-			if(numOfChannels>9) {
-				visualizationPanel2.add(visualizeChannel10Button2, visualizationConstraints2);
-				visualizationConstraints2.gridx++;
-				visualizationPanel2.add(visualizeChannel10onlyButton2, visualizationConstraints2);
 				visualizationConstraints2.gridx = 0;
 				visualizationConstraints2.gridy++;
 			}
@@ -2744,25 +2489,56 @@ public class Annotater<T extends RealType<T>> implements Command {
 			JLabel l1,l2;
 			l1 = new JLabel("Intensity thresholding");
 			l2 = new JLabel("Area thresholding");
-			JPanel thresholdingMarkerPanel = new JPanel();
+			JPanel thresholdingMarkerPanel = new JPanel(), intensityThresholdingMarkerPanel = new JPanel(), areaThresholdingMarkerPanel = new JPanel();
 			thresholdingMarkerPanel.setBorder(BorderFactory.createTitledBorder(""));
 			GridBagLayout thresholdingMarkerPanelLayout = new GridBagLayout();
-			GridBagConstraints thresholdingMarkerPanelConstraints = new GridBagConstraints();
+			GridBagConstraints thresholdingMarkerPanelConstraints = new GridBagConstraints(), intensityThresholdingMarkerPanelConstraints = new GridBagConstraints(), areaThresholdingMarkerPanelConstraints = new GridBagConstraints();
 			thresholdingMarkerPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
 			thresholdingMarkerPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
 			thresholdingMarkerPanelConstraints.gridwidth = 1;
 			thresholdingMarkerPanelConstraints.gridheight = 1;
 			thresholdingMarkerPanelConstraints.gridx = 0;
 			thresholdingMarkerPanelConstraints.gridy = 0;
+			intensityThresholdingMarkerPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+			intensityThresholdingMarkerPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+			intensityThresholdingMarkerPanelConstraints.gridwidth = 1;
+			intensityThresholdingMarkerPanelConstraints.gridheight = 1;
+			intensityThresholdingMarkerPanelConstraints.gridx = 0;
+			intensityThresholdingMarkerPanelConstraints.gridy = 0;
+			areaThresholdingMarkerPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+			areaThresholdingMarkerPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+			areaThresholdingMarkerPanelConstraints.gridwidth = 1;
+			areaThresholdingMarkerPanelConstraints.gridheight = 1;
+			areaThresholdingMarkerPanelConstraints.gridx = 0;
+			areaThresholdingMarkerPanelConstraints.gridy = 0;
+			
+			
 			thresholdingMarkerPanel.setLayout(thresholdingMarkerPanelLayout);
 			thresholdingMarkerPanel.add(l1,thresholdingMarkerPanelConstraints);
 			thresholdingMarkerPanelConstraints.gridy++;
-			thresholdingMarkerPanel.add(intensityThresholdingScrollBar,thresholdingMarkerPanelConstraints);
+			
+			intensityThresholdingMarkerPanel.add(intensityThresholdingScrollBar,intensityThresholdingMarkerPanelConstraints);
+			intensityThresholdingMarkerPanelConstraints.gridx++;
+			intensityThresholdingTextArea.setPreferredSize( new Dimension( 50, 24 ) );
+			intensityThresholdingMarkerPanel.add(intensityThresholdingTextArea,intensityThresholdingMarkerPanelConstraints);
+			intensityThresholdingMarkerPanelConstraints.gridx++;
+			intensityThresholdingMarkerPanel.add(setIntensityThresholdButton,intensityThresholdingMarkerPanelConstraints);
+			
+			thresholdingMarkerPanel.add(intensityThresholdingMarkerPanel,thresholdingMarkerPanelConstraints);
 			thresholdingMarkerPanelConstraints.gridy++;
 			thresholdingMarkerPanel.add(l2,thresholdingMarkerPanelConstraints);
 			thresholdingMarkerPanelConstraints.gridy++;
-			thresholdingMarkerPanel.add(areaThresholdingScrollBar,thresholdingMarkerPanelConstraints);
+			
+			areaThresholdingMarkerPanel.add(areaThresholdingScrollBar,areaThresholdingMarkerPanelConstraints);
+			areaThresholdingMarkerPanelConstraints.gridx++;
+			areaThresholdingTextArea.setPreferredSize( new Dimension( 50, 24 ) );
+			areaThresholdingMarkerPanel.add(areaThresholdingTextArea,areaThresholdingMarkerPanelConstraints);
+			areaThresholdingMarkerPanelConstraints.gridx++;
+			areaThresholdingMarkerPanel.add(setAreaThresholdButton,areaThresholdingMarkerPanelConstraints);
+			
+			thresholdingMarkerPanel.add(areaThresholdingMarkerPanel,thresholdingMarkerPanelConstraints);
 			thresholdingMarkerPanelConstraints.gridy++;
+			
 			JPanel acceptanceThresholdingMarkerPanel = new JPanel();
 			acceptanceThresholdingMarkerPanel.setBorder(BorderFactory.createTitledBorder(""));
 			GridBagConstraints acceptanceThresholdingMarkerPanelConstraints = new GridBagConstraints();
@@ -2994,10 +2770,13 @@ public class Annotater<T extends RealType<T>> implements Command {
 					loadButton2.removeActionListener(listener);
 					saveButton1.removeActionListener(listener);
 					saveButton2.removeActionListener(listener);
+					//filterNucleiButton.removeActionListener(listener);
 					analyzeClassesButton.removeActionListener(listener);
 					classSnapshotButton.removeActionListener(listener);
+					batchClassesMeasurementsButton.removeActionListener(listener);
 					analyzeMarkerButton.removeActionListener(listener);
 					markerSnapshotButton.removeActionListener(listener);
+					batchMarkerMeasurementsButton.removeActionListener(listener);
 					newObjectButton.removeActionListener(listener);
 					removeObjectButton.removeActionListener(listener);
 					splitObjectsButton.removeActionListener(listener);
@@ -3012,6 +2791,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 					if(numOfClasses>2) {class4Button.removeActionListener(listener);class4ColorButton.removeActionListener(listener);class4RemoveButton.removeActionListener(listener);}
 					if(numOfClasses>3) {class5Button.removeActionListener(listener);class5ColorButton.removeActionListener(listener);class5RemoveButton.removeActionListener(listener);}
 					addMarkerButton.removeActionListener(listener);
+					batchMarkerButton.removeActionListener(listener);
 					visualizeChannel1Button1.removeActionListener(listener);
 					visualizeChannel1onlyButton1.removeActionListener(listener);
 					visualizeChannel1Button2.removeActionListener(listener);
@@ -3025,9 +2805,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					if(numOfMarkers>4) {removeMarker5ButtonFromListener();}
 					if(numOfMarkers>5) {removeMarker6ButtonFromListener();}
 					if(numOfMarkers>6) {removeMarker7ButtonFromListener();}
-					if(numOfMarkers>7) {removeMarker8ButtonFromListener();}
-					if(numOfMarkers>8) {removeMarker9ButtonFromListener();}
-					if(numOfMarkers>9) {removeMarker10ButtonFromListener();}
 					if(numOfChannels>1) {
 						visualizeChannel2Button1.removeActionListener(listener);
 						visualizeChannel2Button2.removeActionListener(listener);
@@ -3064,27 +2841,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 						visualizeChannel7onlyButton1.removeActionListener(listener);
 						visualizeChannel7onlyButton2.removeActionListener(listener);
 					}
-					if(numOfChannels>7) {
-						visualizeChannel8Button1.removeActionListener(listener);
-						visualizeChannel8Button2.removeActionListener(listener);
-						visualizeChannel8onlyButton1.removeActionListener(listener);
-						visualizeChannel8onlyButton2.removeActionListener(listener);
-					}
-					if(numOfChannels>8) {
-						visualizeChannel9Button1.removeActionListener(listener);
-						visualizeChannel9Button2.removeActionListener(listener);
-						visualizeChannel9onlyButton1.removeActionListener(listener);
-						visualizeChannel9onlyButton2.removeActionListener(listener);
-					}
-					if(numOfChannels>9) {
-						visualizeChannel10Button1.removeActionListener(listener);
-						visualizeChannel10Button2.removeActionListener(listener);
-						visualizeChannel10onlyButton1.removeActionListener(listener);
-						visualizeChannel10onlyButton2.removeActionListener(listener);
-					}
 					// Set number of classes back to 1
 					numOfClasses = 1;
-					on = 0;
+					on = false;
 				}
 			});
 
@@ -3099,17 +2858,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			imp.getCanvas().addKeyListener( keyListener );
 			
 			// add listeners
-			if(on==0) {
+			if(!on) {
 				nucleiAnnotationButton.addActionListener(listener);
 				nucleiMarkerButton.addActionListener(listener);
 				loadButton1.addActionListener(listener);
 				loadButton2.addActionListener(listener);
 				saveButton1.addActionListener(listener);
 				saveButton2.addActionListener(listener);
+				//filterNucleiButton.addActionListener(listener);
 				analyzeClassesButton.addActionListener(listener);
 				classSnapshotButton.addActionListener(listener);
+				batchClassesMeasurementsButton.addActionListener(listener);
 				analyzeMarkerButton.addActionListener(listener);
 				markerSnapshotButton.addActionListener(listener);
+				batchMarkerMeasurementsButton.addActionListener(listener);
 				newObjectButton.addActionListener(listener);
 				removeObjectButton.addActionListener(listener);
 				mergeObjectsButton.addActionListener(listener);
@@ -3120,6 +2882,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				class1ColorButton.addActionListener(listener);
 				class1RemoveButton.addActionListener(listener);
 				addMarkerButton.addActionListener(listener);
+				batchMarkerButton.addActionListener(listener);
 				visualizeChannel1Button1.addActionListener(listener);
 				visualizeChannel1Button2.addActionListener(listener);
 				visualizeChannel1onlyButton1.addActionListener(listener);
@@ -3162,25 +2925,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 					visualizeChannel7onlyButton1.addActionListener(listener);
 					visualizeChannel7onlyButton2.addActionListener(listener);
 				}
-				if(numOfChannels>7) {
-					visualizeChannel8Button1.addActionListener(listener);
-					visualizeChannel8Button2.addActionListener(listener);
-					visualizeChannel8onlyButton1.addActionListener(listener);
-					visualizeChannel8onlyButton2.addActionListener(listener);
-				}
-				if(numOfChannels>8) {
-					visualizeChannel9Button1.addActionListener(listener);
-					visualizeChannel9Button2.addActionListener(listener);
-					visualizeChannel9onlyButton1.addActionListener(listener);
-					visualizeChannel9onlyButton2.addActionListener(listener);
-				}
-				if(numOfChannels>9) {
-					visualizeChannel10Button1.addActionListener(listener);
-					visualizeChannel10Button2.addActionListener(listener);
-					visualizeChannel10onlyButton1.addActionListener(listener);
-					visualizeChannel10onlyButton2.addActionListener(listener);
-				}
-				on = 1;
+				on = true;
 			}
 
 		}
@@ -3202,8 +2947,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		/**
 		 * Add new segmentation class (new label and new list on the right side)
 		 */
-		public int findClassColor() {
-			int colorCode = 0;
+		public byte findClassColor() {
+			byte colorCode = 0;
 			boolean foundColor = false;
 			while (!foundColor) {
 				foundColor = true;
@@ -3218,7 +2963,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 		}
 		public void addClass()
 		{					
-			objectsInEachClass[numOfClasses] = new ArrayList<FloatPolygon>();
+			objectsInEachClass[numOfClasses] = new ArrayList<Point[]>();
 			if(numOfClasses==1) {
 				classesPanel.add(class2Panel,classesConstraints);
 				classesConstraints.gridy++;
@@ -3272,8 +3017,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 		public void addMarker()
 		{	
 			for(int j=0;j<4;j++) {
-				positiveNucleiForEachMarker[numOfMarkers][j] = new ArrayList<Integer>();
-				objectsForEachMarkerAndEachPattern[numOfMarkers][j] = new ArrayList<FloatPolygon>();
+				positiveNucleiForEachMarker[numOfMarkers][j] = new ArrayList<Short>();
 			}
 			if(numOfMarkers==0) {
 				markerPanel.add(marker1PatternPanel1, markerConstraints);
@@ -3331,30 +3075,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				addMarker7ButtonFromListener();
 				numOfMarkers = 7;
 			}
-			else if(numOfMarkers==7) {
-				markerPanel.add(marker8PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker8PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-				addMarker8ButtonFromListener();
-				numOfMarkers = 8;
-			}
-			else if(numOfMarkers==8) {
-				markerPanel.add(marker9PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker9PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-				addMarker9ButtonFromListener();
-				numOfMarkers = 9;
-			}
-			else if(numOfMarkers==9) {
-				markerPanel.add(marker10PatternPanel1, markerConstraints);
-				markerConstraints.gridy++;
-				markerPanel.add(marker10PatternPanel2, markerConstraints);
-				markerConstraints.gridy++;
-				addMarker10ButtonFromListener();
-				numOfMarkers = 10;
-			}
 			
 			repaintAll();
 		}
@@ -3363,24 +3083,26 @@ public class Annotater<T extends RealType<T>> implements Command {
 	/**
 	 * Compute intensity threshold for which the objects become positive
 	 */
-	void computeIntensityThreshodForEachObject(ImageProcessor ip, List<FloatPolygon> [] cellCompartmentObjectsInEachClass) {
+	void computeIntensityThreshodForEachObject(List<Polygon> [] cellCompartmentObjectsInEachClass) {
 		int maxObjectsForOneClass=0;
 		for(int c=0;c<numOfClasses;c++) {
 			if(cellCompartmentObjectsInEachClass[c].size()>maxObjectsForOneClass) {
 				maxObjectsForOneClass = cellCompartmentObjectsInEachClass[c].size(); 
 			}
 		}
-		intensityThresholds = new int[numOfClasses][maxObjectsForOneClass];
+		intensityThresholds = new short[numOfClasses][maxObjectsForOneClass];
 		for(int c=0;c<numOfClasses;c++) {
 			for(int i=0;i<cellCompartmentObjectsInEachClass[c].size();i++) {
-				if(cellCompartmentObjectsInEachClass[c].get(i).npoints>0) {
-					FloatPolygon fp = cellCompartmentObjectsInEachClass[c].get(i);
-					int[] intensities = new int[fp.npoints];
+				Polygon fp = cellCompartmentObjectsInEachClass[c].get(i);
+				if(fp.npoints>0) {
+					short[] intensities = new short[fp.npoints];
+					ImageProcessor ipt = displayImage.getStack().getProcessor(chosenChannel);
 					for(int p=0;p<fp.npoints;p++) {
-						intensities[p] = (int)ip.getf((int)fp.xpoints[p],(int)fp.ypoints[p]);
+						intensities[p] = (short)ipt.getf(fp.xpoints[p],fp.ypoints[p]);
 					}
 					Arrays.sort(intensities);
 					int currentThreshold = (int)((float)fp.npoints - (float)areaThresholdingScrollBar.getValue()*(float)fp.npoints/(float)100);
+					//int currentThreshold = (int)((float)fp.npoints - (float)areaThresholdingScrollBar.getValue()*(float)fp.npoints/(float)100);
 					if(currentThreshold>=fp.npoints) {currentThreshold = fp.npoints-1;}
 					if(currentThreshold<0) {currentThreshold = 0;}
 					intensityThresholds[c][i] = intensities[currentThreshold];
@@ -3415,8 +3137,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		// make sure that the new nucleus is defined by at least one point
 		if(nbPts>3) {
 			// define points in the roi that do not overlap with previous rois 
-			float[] xPoints = new float[nbPts];
-			float[] yPoints = new float[nbPts];
+			int[] xPoints = new int[nbPts];
+			int[] yPoints = new int[nbPts];
 			nbPts=0;
 			for (int u=0; u<pts.length; u++) {
 				if(roiFlag[pts[u].x][pts[u].y][0]==(-1)) {
@@ -3430,15 +3152,17 @@ public class Annotater<T extends RealType<T>> implements Command {
 			if(nbPts==pts.length) {
 				// if the new roi does not overlap with previous rois -> extract current roi as outline
 				drawNewObjectContour(r,currentClass);
+				Point[] RoiPoints = new Point[xPoints.length];
 				for(int u = 0; u< xPoints.length; u++) {
-					roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
-					roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[currentClass].size();
-					roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+					roiFlag[xPoints[u]][yPoints[u]][0] = currentClass;
+					roiFlag[xPoints[u]][yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+					roiFlag[xPoints[u]][yPoints[u]][2] = (short)(overlay.size()-1);
+					RoiPoints[u] = new Point(xPoints[u],yPoints[u]);
 				}
 				// define polygon and roi corresponding to the new region
-				FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+				//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,nbPts,Roi.FREEROI);
 				// save new nucleus as roi in the corresponding class
-				objectsInEachClass[currentClass].add(fPoly);
+				objectsInEachClass[currentClass].add(RoiPoints);
 			}
 			else {
 				// extract non overlapping nucleus
@@ -3457,8 +3181,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 								}
 							}
 						}
-						float[] xUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
-						float[] yUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
+						int[] xUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
+						int[] yUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
 						int currentIndex=0;
 						for(int u = 0; u< xPoints.length; u++) {
 							if(pointsToRemoveIndexes[u]<1) {
@@ -3467,34 +3191,38 @@ public class Annotater<T extends RealType<T>> implements Command {
 								currentIndex++;
 							}
 						}
-						xPoints = null;
-						yPoints = null;
+						//xPoints = null;
+						//yPoints = null;
 						xPoints = xUpdatedPoints;
 						yPoints = yUpdatedPoints;
-					
+						
 						// add nucleus to the list of nuclei
+						Point[] RoiPoints = new Point[xUpdatedPoints.length];
 						for(int u = 0; u< xPoints.length; u++) {
-							roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
-							roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[currentClass].size();
-							roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+							roiFlag[xUpdatedPoints[u]][yUpdatedPoints[u]][0] = currentClass;
+							roiFlag[xUpdatedPoints[u]][yUpdatedPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+							roiFlag[xUpdatedPoints[u]][yUpdatedPoints[u]][2] = (short)(overlay.size()-1);
+							RoiPoints[u] = new Point(xUpdatedPoints[u],yUpdatedPoints[u]);
 						}
 						// define polygon and roi corresponding to the new region
-						FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+						//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 						// save new nucleus as roi in the corresponding class
-						objectsInEachClass[currentClass].add(fPoly);
+						objectsInEachClass[currentClass].add(RoiPoints);
 					}
 				}
 				else {
 					// add nucleus to the list of nuclei
+					Point[] RoiPoints = new Point[xPoints.length];
 					for(int u = 0; u< xPoints.length; u++) {
-						roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
-						roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[currentClass].size();
-						roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+						roiFlag[xPoints[u]][yPoints[u]][0] = currentClass;
+						roiFlag[xPoints[u]][yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+						roiFlag[xPoints[u]][yPoints[u]][2] = (short)(overlay.size()-1);
+						RoiPoints[u] = new Point(xPoints[u],yPoints[u]);
 					}
 					// define polygon and roi corresponding to the new region
-					FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+					//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 					// save new nucleus as roi in the corresponding class
-					objectsInEachClass[currentClass].add(fPoly);
+					objectsInEachClass[currentClass].add(RoiPoints);
 				}
 			}
 		}
@@ -3508,8 +3236,27 @@ public class Annotater<T extends RealType<T>> implements Command {
 			for(int p = 0; p < 4; p++) {
 				for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][p].size(); i++) {
 					Point[] pts = overlay.get(positiveNucleiForEachMarker[currentMarker][p].get(i)).getContainedPoints();
-					markersOverlay.get(roiFlag[pts[pts.length/2].x][pts[pts.length/2].y][2]).setStrokeColor(colors[classColors[roiFlag[pts[pts.length/2].x][pts[pts.length/2].y][0]]]);
-					markersOverlay.get(roiFlag[pts[pts.length/2].x][pts[pts.length/2].y][2]).setStrokeWidth(0);
+					int currentX=-1,currentY=-1;
+					if(roiFlag[pts[pts.length/2].x][pts[pts.length/2].y][2]>(-1)) {
+						currentX = pts[pts.length/2].x;
+						currentY = pts[pts.length/2].y;
+					}
+					else {
+						for(int k = 0; k < pts.length; k++) {
+							if(roiFlag[pts[k].x][pts[k].y][2]>(-1)) {
+								currentX = pts[k].x;
+								currentY = pts[k].y;
+							}
+						}
+					}
+					if(currentX>(-1)) {
+						if(roiFlag[currentX][currentY][2]>(-1)) {
+							if(roiFlag[currentX][pts[pts.length/2].y][2]>(-1)) {
+								markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeColor(colors[classColors[roiFlag[currentX][currentY][0]]]);
+								markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeWidth(0);
+							}
+						}
+					}
 				}
 			}
 		}
@@ -3519,11 +3266,13 @@ public class Annotater<T extends RealType<T>> implements Command {
 		for(int i=0;i<numOfClasses;i++) {
 			for(int j=0;j<objectsInEachClass[i].size();j++) {
 				if(intensityThresholdingScrollBar.getValue()<intensityThresholds[i][j]) {
-					Point pt = new Point((int)objectsInEachClass[i].get(j).xpoints[objectsInEachClass[i].get(j).npoints/2],(int)objectsInEachClass[i].get(j).ypoints[objectsInEachClass[i].get(j).npoints/2]);
+					Point[] pl = objectsInEachClass[i].get(j);
+					Point pt = new Point(pl[pl.length/2].x,pl[pl.length/2].y);
 					activateNucleusMarkerThresholding(pt);
 				}
 				else {
-					Point pt = new Point((int)objectsInEachClass[i].get(j).xpoints[objectsInEachClass[i].get(j).npoints/2],(int)objectsInEachClass[i].get(j).ypoints[objectsInEachClass[i].get(j).npoints/2]);
+					Point[] pl = objectsInEachClass[i].get(j);
+					Point pt = new Point(pl[pl.length/2].x,pl[pl.length/2].y);
 					deactivateNucleusMarkerThresholding(pt);
 				}
 			}
@@ -3535,10 +3284,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 		int[][][] nuclearComponent = new int[numOfClasses][displayImage.getWidth()][displayImage.getHeight()], nuclei = new int[numOfClasses][displayImage.getWidth()][displayImage.getHeight()];
 		for(int i=0;i<numOfClasses;i++) {
 			for(int j=0;j<objectsInEachClass[i].size();j++) {
-				FloatPolygon fp = objectsInEachClass[i].get(j);
-				for(int k=0;k<fp.npoints;k++) {
-					nuclei[i][(int)fp.xpoints[k]][(int)fp.ypoints[k]] = j+1;
-					nuclearComponent[i][(int)fp.xpoints[k]][(int)fp.ypoints[k]] = j+1;
+				Point[] fp = objectsInEachClass[i].get(j);
+				for(int k=0;k<fp.length;k++) {
+					nuclei[i][fp[k].x][fp[k].y] = j+1;
+					nuclearComponent[i][fp[k].x][fp[k].y] = j+1;
 				}
 			}
 		}
@@ -3582,9 +3331,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 				int[][] currentNuclei = new int[displayImage.getWidth()][displayImage.getHeight()];
 				for(int j=0;j<25;j++) {
 					if(globalIndex<objectsInEachClass[i].size()) {
-						FloatPolygon fp = objectsInEachClass[i].get(globalIndex);
-						for(int k=0;k<fp.npoints;k++) {
-							currentNuclei[(int)fp.xpoints[k]][(int)fp.ypoints[k]] = j+1;
+						//Polygon fp = objectsInEachClass[i].get(globalIndex).getPolygon();
+						Point[] fp = objectsInEachClass[i].get(globalIndex);
+						for(int k=0;k<fp.length;k++) {
+							currentNuclei[fp[k].x][fp[k].y] = j+1;
 						}
 						globalIndex++;
 					}
@@ -3617,17 +3367,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 									membranarComponent[i][x][y] = value + cpt*25;
 								}
 								else {
-									FloatPolygon fp1 = objectsInEachClass[i].get(membranarComponent[classRef][x][y]-1),
+									//Polygon fp1 = objectsInEachClass[i].get(membranarComponent[classRef][x][y]-1).getPolygon(),
+										//	fp2 = objectsInEachClass[i].get(value + cpt*25 -1).getPolygon();
+									Point[] fp1 = objectsInEachClass[i].get(membranarComponent[classRef][x][y]-1),
 											fp2 = objectsInEachClass[i].get(value + cpt*25 -1);
 									double minDistance1=100000, minDistance2=100000;
-									for(int k=0;k<fp1.npoints;k++) {
-										if((Math.pow(x-fp1.xpoints[k],2)+Math.pow(y-fp1.ypoints[k],2))<minDistance1){
-											minDistance1 = Math.pow(x-fp1.xpoints[k],2)+Math.pow(y-fp1.ypoints[k],2);
+									for(int k=0;k<fp1.length;k++) {
+										if((Math.pow(x-fp1[k].x,2)+Math.pow(y-fp1[k].y,2))<minDistance1){
+											minDistance1 = Math.pow(x-fp1[k].x,2)+Math.pow(y-fp1[k].y,2);
 										}
 									}
-									for(int k=0;k<fp2.npoints;k++) {
-										if((Math.pow(x-fp2.xpoints[k],2)+Math.pow(y-fp2.ypoints[k],2))<minDistance2){
-											minDistance2 = Math.pow(x-fp2.xpoints[k],2)+Math.pow(y-fp2.ypoints[k],2);
+									for(int k=0;k<fp2.length;k++) {
+										if((Math.pow(x-fp2[k].x,2)+Math.pow(y-fp2[k].y,2))<minDistance2){
+											minDistance2 = Math.pow(x-fp2[k].x,2)+Math.pow(y-fp2[k].y,2);
 										}
 									}
 									if(minDistance2<minDistance1) {
@@ -3655,9 +3407,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 				int[][] currentNuclei = new int[displayImage.getWidth()][displayImage.getHeight()];
 				for(int j=0;j<25;j++) {
 					if(globalIndex<objectsInEachClass[i].size()) {
-						FloatPolygon fp = objectsInEachClass[i].get(globalIndex);
-						for(int k=0;k<fp.npoints;k++) {
-							currentNuclei[(int)fp.xpoints[k]][(int)fp.ypoints[k]] = j+1;
+						//Polygon fp = objectsInEachClass[i].get(globalIndex).getPolygon();
+						Point[] fp = objectsInEachClass[i].get(globalIndex);
+						for(int k=0;k<fp.length;k++) {
+							currentNuclei[fp[k].x][fp[k].y] = j+1;
 						}
 						globalIndex++;
 					}
@@ -3698,17 +3451,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 										cytoplasmicComponent[i][x][y] = value + cpt*25;
 									}
 									else {
-										FloatPolygon fp1 = objectsInEachClass[i].get(cytoplasmicComponent[classRef][x][y]-1),
+										//Polygon fp1 = objectsInEachClass[i].get(cytoplasmicComponent[classRef][x][y]-1).getPolygon(),
+											//	fp2 = objectsInEachClass[i].get(value  + cpt*25 -1).getPolygon();
+										Point[] fp1 = objectsInEachClass[i].get(cytoplasmicComponent[classRef][x][y]-1),
 												fp2 = objectsInEachClass[i].get(value  + cpt*25 -1);
 										double minDistance1=100000, minDistance2=100000;
-										for(int k=0;k<fp1.npoints;k++) {
-											if((Math.pow(x-fp1.xpoints[k],2)+Math.pow(y-fp1.ypoints[k],2))<minDistance1){
-												minDistance1 = Math.pow(x-fp1.xpoints[k],2)+Math.pow(y-fp1.ypoints[k],2);
+										for(int k=0;k<fp1.length;k++) {
+											if((Math.pow(x-fp1[k].x,2)+Math.pow(y-fp1[k].y,2))<minDistance1){
+												minDistance1 = Math.pow(x-fp1[k].x,2)+Math.pow(y-fp1[k].y,2);
 											}
 										}
-										for(int k=0;k<fp2.npoints;k++) {
-											if((Math.pow(x-fp2.xpoints[k],2)+Math.pow(y-fp2.ypoints[k],2))<minDistance2){
-												minDistance2 = Math.pow(x-fp2.xpoints[k],2)+Math.pow(y-fp2.ypoints[k],2);
+										for(int k=0;k<fp2.length;k++) {
+											if((Math.pow(x-fp2[k].x,2)+Math.pow(y-fp2[k].y,2))<minDistance2){
+												minDistance2 = Math.pow(x-fp2[k].x,2)+Math.pow(y-fp2[k].y,2);
 											}
 										}
 										if(minDistance2<minDistance1) {
@@ -3825,14 +3580,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			channel6RadioButton.setSelected(false);
 			JRadioButton channel7RadioButton = new JRadioButton("Channel 7");
 			channel7RadioButton.setSelected(false);
-			JRadioButton channel8RadioButton = new JRadioButton("Channel 8");
-			channel8RadioButton.setSelected(false);
-			JRadioButton channel9RadioButton = new JRadioButton("Channel 9");
-			channel9RadioButton.setSelected(false);
-			JRadioButton channel10RadioButton = new JRadioButton("Channel 10");
-			channel10RadioButton.setSelected(false);
-
-
+			
 			JPanel currentchannelPanel = new JPanel();
 			currentchannelPanel.setBorder(BorderFactory.createTitledBorder(""));
 			GridBagLayout currentchannelPanelLayout = new GridBagLayout();
@@ -3870,18 +3618,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				currentchannelPanel.add(channel7RadioButton,currentchannelPanelConstraints);
 				currentchannelPanelConstraints.gridy++;
 			}
-			if(numOfChannels>7) {
-				currentchannelPanel.add(channel8RadioButton,currentchannelPanelConstraints);
-				currentchannelPanelConstraints.gridy++;
-			}
-			if(numOfChannels>8) {
-				currentchannelPanel.add(channel9RadioButton,currentchannelPanelConstraints);
-				currentchannelPanelConstraints.gridy++;
-			}
-			if(numOfChannels>9) {
-				currentchannelPanel.add(channel10RadioButton,currentchannelPanelConstraints);
-				currentchannelPanelConstraints.gridy++;
-			}
 			ButtonGroup bg3=new ButtonGroup();
 			switch (numOfChannels) {
 			case 1:
@@ -3905,15 +3641,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			case 7:
 				bg3.add(channel1RadioButton);bg3.add(channel2RadioButton);bg3.add(channel3RadioButton);bg3.add(channel4RadioButton);bg3.add(channel5RadioButton);bg3.add(channel6RadioButton);bg3.add(channel7RadioButton);
 				break;
-			case 8:
-				bg3.add(channel1RadioButton);bg3.add(channel2RadioButton);bg3.add(channel3RadioButton);bg3.add(channel4RadioButton);bg3.add(channel5RadioButton);bg3.add(channel6RadioButton);bg3.add(channel7RadioButton);bg3.add(channel8RadioButton);
-				break;
-			case 9:
-				bg3.add(channel1RadioButton);bg3.add(channel2RadioButton);bg3.add(channel3RadioButton);bg3.add(channel4RadioButton);bg3.add(channel5RadioButton);bg3.add(channel6RadioButton);bg3.add(channel7RadioButton);bg3.add(channel8RadioButton);bg3.add(channel9RadioButton);				
-				break;
-			case 10:
-				bg3.add(channel1RadioButton);bg3.add(channel2RadioButton);bg3.add(channel3RadioButton);bg3.add(channel4RadioButton);bg3.add(channel5RadioButton);bg3.add(channel6RadioButton);bg3.add(channel7RadioButton);bg3.add(channel8RadioButton);bg3.add(channel9RadioButton);bg3.add(channel10RadioButton);				
-				break;
 			default:
 				break;
 			}
@@ -3934,21 +3661,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 			else if(channel5RadioButton.isSelected()) {chosenChannel = 5;}
 			else if(channel6RadioButton.isSelected()) {chosenChannel = 6;}
 			else if(channel7RadioButton.isSelected()) {chosenChannel = 7;}
-			else if(channel8RadioButton.isSelected()) {chosenChannel = 8;}
-			else if(channel9RadioButton.isSelected()) {chosenChannel = 9;}
-			else if(channel10RadioButton.isSelected()) {chosenChannel = 10;}
-
+			channelForMarker[numOfMarkers-1] = chosenChannel;
+			
 			currentMode = 2;
 			currentMarker = numOfMarkers-1;
 			currentPattern = 0;
 			
-			List<FloatPolygon> [] cellComponentInEachClass = new ArrayList[MAX_NUM_CLASSES];
+			List<Polygon> [] cellComponentInEachClass = new ArrayList[MAX_NUM_CLASSES];
 			for(int i=0;i<numOfClasses;i++) {
-				cellComponentInEachClass[i] = new ArrayList<FloatPolygon>();
+				cellComponentInEachClass[i] = new ArrayList<Polygon>();
 			}
 			for(int i=0;i<numOfClasses;i++) {
 				for(int j=0;j<objectsInEachClass[i].size();j++) {
-					FloatPolygon fp = new FloatPolygon();
+					Polygon fp = new Polygon();
 					cellComponentInEachClass[i].add(fp);
 				}
 			}
@@ -3989,20 +3714,26 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 				}
 			}
-			ImageProcessor ip = displayImage.getStack().getProcessor(chosenChannel);
+			ImageProcessor ipt = displayImage.getStack().getProcessor(chosenChannel);
 			int maxIntensity=0;
 			for(int y=0; y<displayImage.getHeight(); y++)
 			{
 				for(int x=0; x<displayImage.getWidth(); x++)
 				{
-					int value = (int)ip.getf(x,y);
+					int value = (int)ipt.getf(x,y);
 					if(value>maxIntensity) {maxIntensity = value;}
 				}
 			}
 			intensityThresholdingScrollBar.setMaximum(maxIntensity);
 			intensityThresholdingScrollBar.setValue(maxIntensity/2);
-			computeIntensityThreshodForEachObject(ip, cellComponentInEachClass);
+			intensityThresholdingTextArea.setText("" + maxIntensity/2);
+			intensityThresholdingTextArea.setEditable(false);
+			thresholdForMarker[numOfMarkers-1][1] = maxIntensity/2;
+			computeIntensityThreshodForEachObject(cellComponentInEachClass);
 			areaThresholdingScrollBar.setValue(35);
+			areaThresholdingTextArea.setText("" + 35);
+			areaThresholdingTextArea.setEditable(false);
+			thresholdForMarker[numOfMarkers-1][0] = 35;
 			
 			intensityThresholdingScrollBar.addChangeListener(new ChangeListener() {
 
@@ -4010,6 +3741,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 				public void stateChanged(ChangeEvent ce) {
 					IJ.setThreshold(displayImage, 0, ((JSlider) ce.getSource()).getValue(), "Over/Under");
 					roiActivationAndDeactivationBasedOnThresholding();
+					intensityThresholdingTextArea.setText("" + ((JSlider) ce.getSource()).getValue());
+					thresholdForMarker[numOfMarkers-1][1] = intensityThresholdingScrollBar.getValue();
 				}
 			});
 
@@ -4017,8 +3750,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 				@Override
 				public void stateChanged(ChangeEvent arg0) {
-					computeIntensityThreshodForEachObject(ip, cellComponentInEachClass);
+					computeIntensityThreshodForEachObject(cellComponentInEachClass);
 					roiActivationAndDeactivationBasedOnThresholding();
+					areaThresholdingTextArea.setText("" + ((JSlider) arg0.getSource()).getValue());
+					thresholdForMarker[numOfMarkers-1][0] = areaThresholdingScrollBar.getValue(); 
 					displayImage.updateAndDraw();
 				}
 			});
@@ -4026,7 +3761,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 			okMarkerButton.addActionListener(listener);
 			cancelMarkerButton.addActionListener(listener);
-
+			setIntensityThresholdButton.addActionListener(listener);
+			setAreaThresholdButton.addActionListener(listener);
+			
 			SwingUtilities.invokeLater(
 					new Runnable() {
 						public void run() {
@@ -4037,6 +3774,1224 @@ public class Annotater<T extends RealType<T>> implements Command {
 		}
 
 		return true;	
+	}
+	/** remove incompatible markers associated nuclei */ 
+	private void removeIncompatibility(int markerToRemove, int markerToRemain) {
+		for(int i=0;i<positiveNucleiForEachMarker[markerToRemove][0].size();i++) {
+			for(int j=0;j<positiveNucleiForEachMarker[markerToRemain][0].size();j++) {
+				if(positiveNucleiForEachMarker[markerToRemove][0].get(i).equals(positiveNucleiForEachMarker[markerToRemain][0].get(j))) {
+					positiveNucleiForEachMarker[markerToRemove][0].remove(i);
+					i--;
+					j = positiveNucleiForEachMarker[markerToRemain][0].size();
+				}
+			}
+		}
+	}
+	/** batch process markers */ 
+	private void batchMarker()
+	{
+		boolean batchToDo=false;
+		for(int i=0;i<MAX_NUM_MARKERS;i++) {
+			if(channelForMarker[i]>(-1)) {batchToDo = true;}
+		}
+		if(!batchToDo) {
+			IJ.showMessage("You first need to define marker components by thresholding channels in order to batch process a set of images.");
+		}
+		else {
+			boolean measurementsBatchProcess = false;
+			switch ( JOptionPane.showConfirmDialog( null, "Do you also want to batch process measurements?", "Measurements", JOptionPane.YES_NO_OPTION ) )
+			{
+			case JOptionPane.YES_OPTION:
+				measurementsBatchProcess = true;
+				break;
+			case JOptionPane.NO_OPTION:
+				measurementsBatchProcess = false;
+				break;
+			}
+			
+			imageFolder = "Null";
+			segmentationFolder = "Null";
+			markerFolder = "Null";
+			measurementsFolder = "Null";
+
+			/** JButton for batch processing */
+			JButton imageFolderButton = new JButton("Image folder");
+			JButton segmentationFolderButton = new JButton("Segmentation folder");
+			JButton markerFolderButton = new JButton("Marker folder");
+			JButton measurementsFolderButton = new JButton("Measurements folder");
+			
+			JTextArea imageFolderQuestion = new JTextArea("Where is the folder with the input images?");
+			imageFolderQuestion.setEditable(false);
+			JTextArea segmentationFolderQuestion = new JTextArea("Where is the folder with the segmented input images?");
+			segmentationFolderQuestion.setEditable(false);
+			JTextArea markerFolderQuestion = new JTextArea("Where is the destination folder for the marker images?");
+			markerFolderQuestion.setEditable(false);
+			JTextArea measurmentsFolderQuestion = new JTextArea("Where is the destination folder for the measurements?");
+			measurmentsFolderQuestion.setEditable(false);
+						
+			JPanel batchPanel = new JPanel();
+			batchPanel.setBorder(BorderFactory.createTitledBorder(""));
+			GridBagLayout batchPanelLayout = new GridBagLayout();
+			GridBagConstraints batchPanelConstraints = new GridBagConstraints();
+			batchPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+			batchPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+			batchPanelConstraints.gridwidth = 1;
+			batchPanelConstraints.gridheight = 1;
+			batchPanelConstraints.gridx = 0;
+			batchPanelConstraints.gridy = 0;
+			batchPanel.setLayout(batchPanelLayout);
+
+			batchPanel.add(imageFolderQuestion,batchPanelConstraints);
+			batchPanelConstraints.gridx++;
+			batchPanel.add(imageFolderButton,batchPanelConstraints);
+			batchPanelConstraints.gridy++;
+			batchPanelConstraints.gridx=0;
+			batchPanel.add(segmentationFolderQuestion,batchPanelConstraints);
+			batchPanelConstraints.gridx++;
+			batchPanel.add(segmentationFolderButton,batchPanelConstraints);
+			batchPanelConstraints.gridy++;
+			batchPanelConstraints.gridx=0;
+			batchPanel.add(markerFolderQuestion,batchPanelConstraints);
+			batchPanelConstraints.gridx++;
+			batchPanel.add(markerFolderButton,batchPanelConstraints);
+			batchPanelConstraints.gridy++;
+			batchPanelConstraints.gridx=0;
+			if(measurementsBatchProcess) {
+				batchPanel.add(measurmentsFolderQuestion,batchPanelConstraints);
+				batchPanelConstraints.gridx++;
+				batchPanel.add(measurementsFolderButton,batchPanelConstraints);
+				batchPanelConstraints.gridy++;
+			}
+
+			GenericDialogPlus gd = new GenericDialogPlus("Batch processing for marker identification");
+			gd.addComponent(batchPanel);
+
+			imageFolderButton.addActionListener(new ActionListener() {
+
+				@Override
+				public void actionPerformed(ActionEvent arg0) {
+					DirectoryChooser imageChooser = new DirectoryChooser("Input images folder");
+					imageFolder = imageChooser.getDirectory();
+				}
+			});
+
+			segmentationFolderButton.addActionListener(new ActionListener() {
+
+				@Override
+				public void actionPerformed(ActionEvent arg0) {
+					DirectoryChooser segmentationChooser = new DirectoryChooser("Segmentation images folder");
+					segmentationFolder = segmentationChooser.getDirectory();
+				}
+			});
+			markerFolderButton.addActionListener(new ActionListener() {
+
+				@Override
+				public void actionPerformed(ActionEvent arg0) {
+					DirectoryChooser markerChooser = new DirectoryChooser("Marker images folder");
+					markerFolder = markerChooser.getDirectory();
+				}
+			});
+			measurementsFolderButton.addActionListener(new ActionListener() {
+
+				@Override
+				public void actionPerformed(ActionEvent arg0) {
+					DirectoryChooser measurementsChooser = new DirectoryChooser("Measurements folder");
+					measurementsFolder = measurementsChooser.getDirectory();
+				}
+			});
+
+			gd.showDialog();
+
+			if (gd.wasCanceled()) {
+				for( ActionListener al : imageFolderButton.getActionListeners() ) {imageFolderButton.removeActionListener( al );}
+				for( ActionListener al : segmentationFolderButton.getActionListeners() ) {segmentationFolderButton.removeActionListener( al );}
+				for( ActionListener al : markerFolderButton.getActionListeners() ) {markerFolderButton.removeActionListener( al );}
+				for( ActionListener al : measurementsFolderButton.getActionListeners() ) {measurementsFolderButton.removeActionListener( al );}
+				return;
+			}
+
+			if (gd.wasOKed()) {
+				for( ActionListener al : imageFolderButton.getActionListeners() ) {imageFolderButton.removeActionListener( al );}
+				for( ActionListener al : segmentationFolderButton.getActionListeners() ) {segmentationFolderButton.removeActionListener( al );}
+				for( ActionListener al : markerFolderButton.getActionListeners() ) {markerFolderButton.removeActionListener( al );}
+				for( ActionListener al : measurementsFolderButton.getActionListeners() ) {measurementsFolderButton.removeActionListener( al );}
+				if(imageFolder=="Null") {
+					IJ.showMessage("You need to define a folder with the input images to process.");
+					return;
+				}
+				if(segmentationFolder=="Null") {
+					IJ.showMessage("You need to define a folder with the segmented input images to process.");
+					return;
+				}
+				if(markerFolder=="Null") {
+					IJ.showMessage("You need to define a folder with the marker images associated with the input images to process.");
+					return;
+				}
+				if(measurementsBatchProcess) {
+					if(measurementsFolder=="Null") {
+						IJ.showMessage("You need to define a destination folder for the measurements.");
+						return;
+					}
+				}
+				File imageFile = new File(imageFolder), segmentationFile = new File(segmentationFolder), markerFile = new File(markerFolder), measurementsFile = new File(measurementsFolder);
+				for (File imageFileEntry : imageFile.listFiles()) {
+					if (!imageFileEntry.isDirectory()) {
+			        	String[] currentImageFile = imageFileEntry.getName().split("\\.");
+			        	boolean ok=false;
+			        	for (File segmentationFileEntry : segmentationFile.listFiles()) {
+			        		String[] currentSegmentationFile = segmentationFileEntry.getName().split("\\.");
+			        		if(currentSegmentationFile[0].equals(currentImageFile[0])) {ok=true;}
+			        	}
+			        	if(!ok) {
+			        		IJ.showMessage("For each input image in the input image folder, there must be a segmentation image with the same name in the segmentation folder.");
+			        		return;
+			        	}
+						if(measurementsBatchProcess) {
+							ok = false;
+							for (File markerFileEntry : markerFile.listFiles()) {
+								String[] markerSegmentationFile = markerFileEntry.getName().split("\\.");
+								if(markerSegmentationFile[0].equals(currentImageFile[0])) {ok=true;}
+							}
+							if(!ok) {
+								IJ.showMessage("For each input image in the input image folder, there must be a marker image with the same name in the marker folder.");
+								return;
+							}
+						}
+			        }
+				}
+
+				
+				JTextArea marker1Sentence = new JTextArea("Marker 1 does not coincide with:");
+				marker1Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_1 = new JRadioButton("Marker 1");
+				marker1RadioButton_1.setEnabled(false);
+				JRadioButton marker2RadioButton_1 = new JRadioButton("Marker 2");
+				marker2RadioButton_1.setSelected(false);
+				JRadioButton marker3RadioButton_1 = new JRadioButton("Marker 3");
+				marker3RadioButton_1.setSelected(false);
+				JRadioButton marker4RadioButton_1 = new JRadioButton("Marker 4");
+				marker4RadioButton_1.setSelected(false);
+				JRadioButton marker5RadioButton_1 = new JRadioButton("Marker 5");
+				marker5RadioButton_1.setSelected(false);
+				JRadioButton marker6RadioButton_1 = new JRadioButton("Marker 6");
+				marker6RadioButton_1.setSelected(false);
+				JRadioButton marker7RadioButton_1 = new JRadioButton("Marker 7");
+				marker7RadioButton_1.setSelected(false);
+
+				JTextArea marker2Sentence = new JTextArea("Marker 2 does not coincide with:");
+				marker2Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_2 = new JRadioButton("Marker 1");
+				marker1RadioButton_2.setSelected(false);
+				JRadioButton marker2RadioButton_2 = new JRadioButton("Marker 2");
+				marker2RadioButton_2.setEnabled(false);
+				JRadioButton marker3RadioButton_2 = new JRadioButton("Marker 3");
+				marker3RadioButton_2.setSelected(false);
+				JRadioButton marker4RadioButton_2 = new JRadioButton("Marker 4");
+				marker4RadioButton_2.setSelected(false);
+				JRadioButton marker5RadioButton_2 = new JRadioButton("Marker 5");
+				marker5RadioButton_2.setSelected(false);
+				JRadioButton marker6RadioButton_2 = new JRadioButton("Marker 6");
+				marker6RadioButton_2.setSelected(false);
+				JRadioButton marker7RadioButton_2 = new JRadioButton("Marker 7");
+				marker7RadioButton_2.setSelected(false);
+
+				JTextArea marker3Sentence = new JTextArea("Marker 3 does not coincide with:");
+				marker3Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_3 = new JRadioButton("Marker 1");
+				marker1RadioButton_3.setSelected(false);
+				JRadioButton marker2RadioButton_3 = new JRadioButton("Marker 2");
+				marker2RadioButton_3.setSelected(false);
+				JRadioButton marker3RadioButton_3 = new JRadioButton("Marker 3");
+				marker3RadioButton_3.setEnabled(false);
+				JRadioButton marker4RadioButton_3 = new JRadioButton("Marker 4");
+				marker4RadioButton_3.setSelected(false);
+				JRadioButton marker5RadioButton_3 = new JRadioButton("Marker 5");
+				marker5RadioButton_3.setSelected(false);
+				JRadioButton marker6RadioButton_3 = new JRadioButton("Marker 6");
+				marker6RadioButton_3.setSelected(false);
+				JRadioButton marker7RadioButton_3 = new JRadioButton("Marker 7");
+				marker7RadioButton_3.setSelected(false);
+
+				JTextArea marker4Sentence = new JTextArea("Marker 4 does not coincide with:");
+				marker4Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_4 = new JRadioButton("Marker 1");
+				marker1RadioButton_4.setSelected(false);
+				JRadioButton marker2RadioButton_4 = new JRadioButton("Marker 2");
+				marker2RadioButton_4.setSelected(false);
+				JRadioButton marker3RadioButton_4 = new JRadioButton("Marker 3");
+				marker3RadioButton_4.setSelected(false);
+				JRadioButton marker4RadioButton_4 = new JRadioButton("Marker 4");
+				marker4RadioButton_4.setEnabled(false);
+				JRadioButton marker5RadioButton_4 = new JRadioButton("Marker 5");
+				marker5RadioButton_4.setSelected(false);
+				JRadioButton marker6RadioButton_4 = new JRadioButton("Marker 6");
+				marker6RadioButton_4.setSelected(false);
+				JRadioButton marker7RadioButton_4 = new JRadioButton("Marker 7");
+				marker7RadioButton_4.setSelected(false);
+
+				JTextArea marker5Sentence = new JTextArea("Marker 5 does not coincide with:");
+				marker5Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_5 = new JRadioButton("Marker 1");
+				marker1RadioButton_5.setSelected(false);
+				JRadioButton marker2RadioButton_5 = new JRadioButton("Marker 2");
+				marker2RadioButton_5.setSelected(false);
+				JRadioButton marker3RadioButton_5 = new JRadioButton("Marker 3");
+				marker3RadioButton_5.setSelected(false);
+				JRadioButton marker4RadioButton_5 = new JRadioButton("Marker 4");
+				marker4RadioButton_5.setSelected(false);
+				JRadioButton marker5RadioButton_5 = new JRadioButton("Marker 5");
+				marker5RadioButton_5.setEnabled(false);
+				JRadioButton marker6RadioButton_5 = new JRadioButton("Marker 6");
+				marker6RadioButton_5.setSelected(false);
+				JRadioButton marker7RadioButton_5 = new JRadioButton("Marker 7");
+				marker7RadioButton_5.setSelected(false);
+
+				JTextArea marker6Sentence = new JTextArea("Marker 6 does not coincide with:");
+				marker6Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_6 = new JRadioButton("Marker 1");
+				marker1RadioButton_6.setSelected(false);
+				JRadioButton marker2RadioButton_6 = new JRadioButton("Marker 2");
+				marker2RadioButton_6.setSelected(false);
+				JRadioButton marker3RadioButton_6 = new JRadioButton("Marker 3");
+				marker3RadioButton_6.setSelected(false);
+				JRadioButton marker4RadioButton_6 = new JRadioButton("Marker 4");
+				marker4RadioButton_6.setSelected(false);
+				JRadioButton marker5RadioButton_6 = new JRadioButton("Marker 5");
+				marker5RadioButton_6.setSelected(false);
+				JRadioButton marker6RadioButton_6 = new JRadioButton("Marker 6");
+				marker6RadioButton_6.setEnabled(false);
+				JRadioButton marker7RadioButton_6 = new JRadioButton("Marker 7");
+				marker7RadioButton_6.setSelected(false);
+
+				JTextArea marker7Sentence = new JTextArea("Marker 7 does not coincide with:");
+				marker7Sentence.setEditable(false);
+				JRadioButton marker1RadioButton_7 = new JRadioButton("Marker 1");
+				marker1RadioButton_7.setSelected(false);
+				JRadioButton marker2RadioButton_7 = new JRadioButton("Marker 2");
+				marker2RadioButton_7.setSelected(false);
+				JRadioButton marker3RadioButton_7 = new JRadioButton("Marker 3");
+				marker3RadioButton_7.setSelected(false);
+				JRadioButton marker4RadioButton_7 = new JRadioButton("Marker 4");
+				marker4RadioButton_7.setSelected(false);
+				JRadioButton marker5RadioButton_7 = new JRadioButton("Marker 5");
+				marker5RadioButton_7.setSelected(false);
+				JRadioButton marker6RadioButton_7 = new JRadioButton("Marker 6");
+				marker6RadioButton_7.setSelected(false);
+				JRadioButton marker7RadioButton_7 = new JRadioButton("Marker 7");
+				marker7RadioButton_7.setEnabled(false);
+
+				if(numOfMarkers>1) {
+					JPanel nonOverlappingMarkersPanel1_1 = new JPanel(), nonOverlappingMarkersPanel1_2 = new JPanel();
+					nonOverlappingMarkersPanel1_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout1_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints1_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints1_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints1_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints1_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints1_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints1_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints1_1.gridy = 0;
+					nonOverlappingMarkersPanel1_1.setLayout(nonOverlappingMarkersPanelLayout1_1);
+					nonOverlappingMarkersPanel1_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout1_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints1_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints1_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints1_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints1_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints1_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints1_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints1_2.gridy = 0;
+					nonOverlappingMarkersPanel1_2.setLayout(nonOverlappingMarkersPanelLayout1_2);
+					JPanel nonOverlappingMarkersPanel2_1 = new JPanel(), nonOverlappingMarkersPanel2_2 = new JPanel();
+					nonOverlappingMarkersPanel2_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout2_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints2_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints2_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints2_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints2_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints2_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints2_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints2_1.gridy = 0;
+					nonOverlappingMarkersPanel2_1.setLayout(nonOverlappingMarkersPanelLayout2_1);
+					nonOverlappingMarkersPanel2_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout2_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints2_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints2_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints2_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints2_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints2_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints2_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints2_2.gridy = 0;
+					nonOverlappingMarkersPanel2_2.setLayout(nonOverlappingMarkersPanelLayout2_2);
+					JPanel nonOverlappingMarkersPanel3_1 = new JPanel(), nonOverlappingMarkersPanel3_2 = new JPanel();
+					nonOverlappingMarkersPanel3_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout3_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints3_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints3_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints3_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints3_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints3_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints3_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints3_1.gridy = 0;
+					nonOverlappingMarkersPanel3_1.setLayout(nonOverlappingMarkersPanelLayout3_1);
+					nonOverlappingMarkersPanel3_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout3_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints3_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints3_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints3_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints3_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints3_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints3_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints3_2.gridy = 0;
+					nonOverlappingMarkersPanel3_2.setLayout(nonOverlappingMarkersPanelLayout3_2);
+					JPanel nonOverlappingMarkersPanel4_1 = new JPanel(), nonOverlappingMarkersPanel4_2 = new JPanel();
+					nonOverlappingMarkersPanel4_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout4_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints4_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints4_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints4_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints4_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints4_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints4_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints4_1.gridy = 0;
+					nonOverlappingMarkersPanel4_1.setLayout(nonOverlappingMarkersPanelLayout4_1);
+					nonOverlappingMarkersPanel4_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout4_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints4_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints4_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints4_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints4_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints4_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints4_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints4_2.gridy = 0;
+					nonOverlappingMarkersPanel4_2.setLayout(nonOverlappingMarkersPanelLayout4_2);
+					JPanel nonOverlappingMarkersPanel5_1 = new JPanel(), nonOverlappingMarkersPanel5_2 = new JPanel();
+					nonOverlappingMarkersPanel5_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout5_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints5_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints5_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints5_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints5_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints5_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints5_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints5_1.gridy = 0;
+					nonOverlappingMarkersPanel5_1.setLayout(nonOverlappingMarkersPanelLayout5_1);
+					nonOverlappingMarkersPanel5_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout5_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints5_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints5_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints5_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints5_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints5_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints5_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints5_2.gridy = 0;
+					nonOverlappingMarkersPanel5_2.setLayout(nonOverlappingMarkersPanelLayout5_2);
+					JPanel nonOverlappingMarkersPanel6_1 = new JPanel(), nonOverlappingMarkersPanel6_2 = new JPanel();
+					nonOverlappingMarkersPanel6_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout6_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints6_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints6_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints6_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints6_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints6_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints6_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints6_1.gridy = 0;
+					nonOverlappingMarkersPanel6_1.setLayout(nonOverlappingMarkersPanelLayout6_1);
+					nonOverlappingMarkersPanel6_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout6_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints6_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints6_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints6_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints6_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints6_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints6_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints6_2.gridy = 0;
+					nonOverlappingMarkersPanel6_2.setLayout(nonOverlappingMarkersPanelLayout6_2);
+					JPanel nonOverlappingMarkersPanel7_1 = new JPanel(), nonOverlappingMarkersPanel7_2 = new JPanel();
+					nonOverlappingMarkersPanel7_1.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout7_1 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints7_1 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints7_1.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints7_1.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints7_1.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints7_1.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints7_1.gridx = 0;
+					nonOverlappingMarkersPanelConstraints7_1.gridy = 0;
+					nonOverlappingMarkersPanel7_1.setLayout(nonOverlappingMarkersPanelLayout7_1);
+					nonOverlappingMarkersPanel7_2.setBorder(BorderFactory.createTitledBorder(""));
+					GridBagLayout nonOverlappingMarkersPanelLayout7_2 = new GridBagLayout();
+					GridBagConstraints nonOverlappingMarkersPanelConstraints7_2 = new GridBagConstraints();
+					nonOverlappingMarkersPanelConstraints7_2.anchor = GridBagConstraints.NORTHWEST;
+					nonOverlappingMarkersPanelConstraints7_2.fill = GridBagConstraints.HORIZONTAL;
+					nonOverlappingMarkersPanelConstraints7_2.gridwidth = 1;
+					nonOverlappingMarkersPanelConstraints7_2.gridheight = 1;
+					nonOverlappingMarkersPanelConstraints7_2.gridx = 0;
+					nonOverlappingMarkersPanelConstraints7_2.gridy = 0;
+					nonOverlappingMarkersPanel7_2.setLayout(nonOverlappingMarkersPanelLayout7_2);
+					
+					
+					nonOverlappingMarkersPanel1_1.add(marker1Sentence,nonOverlappingMarkersPanelConstraints1_1);
+					nonOverlappingMarkersPanelConstraints1_1.gridy++;
+					
+					nonOverlappingMarkersPanel1_2.add(marker1RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+					nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					nonOverlappingMarkersPanel1_2.add(marker2RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+					nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					if(numOfMarkers>2) {
+						nonOverlappingMarkersPanel1_2.add(marker3RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+						nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					}
+					if(numOfMarkers>3) {
+						nonOverlappingMarkersPanel1_2.add(marker4RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+						nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					}
+					if(numOfMarkers>4) {
+						nonOverlappingMarkersPanel1_2.add(marker5RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+						nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					}
+					if(numOfMarkers>5) {
+						nonOverlappingMarkersPanel1_2.add(marker6RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+						nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					}
+					if(numOfMarkers>6) {
+						nonOverlappingMarkersPanel1_2.add(marker7RadioButton_1,nonOverlappingMarkersPanelConstraints1_2);
+						nonOverlappingMarkersPanelConstraints1_2.gridx++;
+					}
+					nonOverlappingMarkersPanelConstraints1_2.gridy++;
+					nonOverlappingMarkersPanelConstraints1_2.gridx=0;
+					
+					
+					nonOverlappingMarkersPanel2_1.add(marker2Sentence,nonOverlappingMarkersPanelConstraints2_1);
+					nonOverlappingMarkersPanelConstraints2_1.gridy++;
+					
+					nonOverlappingMarkersPanel2_2.add(marker1RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+					nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					nonOverlappingMarkersPanel2_2.add(marker2RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+					nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					if(numOfMarkers>2) {
+						nonOverlappingMarkersPanel2_2.add(marker3RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+						nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					}
+					if(numOfMarkers>3) {
+						nonOverlappingMarkersPanel2_2.add(marker4RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+						nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					}
+					if(numOfMarkers>4) {
+						nonOverlappingMarkersPanel2_2.add(marker5RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+						nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					}
+					if(numOfMarkers>5) {
+						nonOverlappingMarkersPanel2_2.add(marker6RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+						nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					}
+					if(numOfMarkers>6) {
+						nonOverlappingMarkersPanel2_2.add(marker7RadioButton_2,nonOverlappingMarkersPanelConstraints2_1);
+						nonOverlappingMarkersPanelConstraints2_1.gridx++;
+					}
+					nonOverlappingMarkersPanelConstraints2_1.gridy++;
+					nonOverlappingMarkersPanelConstraints2_1.gridx=0;
+					
+					if(numOfMarkers>2) {
+						nonOverlappingMarkersPanel3_1.add(marker3Sentence,nonOverlappingMarkersPanelConstraints3_1);
+						nonOverlappingMarkersPanelConstraints3_1.gridy++;
+						
+						nonOverlappingMarkersPanel3_2.add(marker1RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+						nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						nonOverlappingMarkersPanel3_2.add(marker2RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+						nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						nonOverlappingMarkersPanel3_2.add(marker3RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+						nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						if(numOfMarkers>3) {
+							nonOverlappingMarkersPanel3_2.add(marker4RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+							nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						}
+						if(numOfMarkers>4) {
+							nonOverlappingMarkersPanel3_2.add(marker5RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+							nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						}
+						if(numOfMarkers>5) {
+							nonOverlappingMarkersPanel3_2.add(marker6RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+							nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						}
+						if(numOfMarkers>6) {
+							nonOverlappingMarkersPanel3_2.add(marker7RadioButton_3,nonOverlappingMarkersPanelConstraints3_1);
+							nonOverlappingMarkersPanelConstraints3_1.gridx++;
+						}
+						nonOverlappingMarkersPanelConstraints3_1.gridy++;
+						nonOverlappingMarkersPanelConstraints3_1.gridx=0;
+					}
+					
+					if(numOfMarkers>3) {
+						nonOverlappingMarkersPanel4_1.add(marker4Sentence,nonOverlappingMarkersPanelConstraints4_1);
+						nonOverlappingMarkersPanelConstraints4_1.gridy++;
+						
+						nonOverlappingMarkersPanel4_2.add(marker1RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+						nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						nonOverlappingMarkersPanel4_2.add(marker2RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+						nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						nonOverlappingMarkersPanel4_2.add(marker3RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+						nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						nonOverlappingMarkersPanel4_2.add(marker4RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+						nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						if(numOfMarkers>4) {
+							nonOverlappingMarkersPanel4_2.add(marker5RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+							nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						}
+						if(numOfMarkers>5) {
+							nonOverlappingMarkersPanel4_2.add(marker6RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+							nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						}
+						if(numOfMarkers>6) {
+							nonOverlappingMarkersPanel4_2.add(marker7RadioButton_4,nonOverlappingMarkersPanelConstraints4_1);
+							nonOverlappingMarkersPanelConstraints4_1.gridx++;
+						}
+						nonOverlappingMarkersPanelConstraints4_1.gridy++;
+						nonOverlappingMarkersPanelConstraints4_1.gridx=0;
+					}
+					
+					if(numOfMarkers>4) {
+						nonOverlappingMarkersPanel5_1.add(marker5Sentence,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridy++;
+						
+						nonOverlappingMarkersPanel5_2.add(marker1RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						nonOverlappingMarkersPanel5_2.add(marker2RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						nonOverlappingMarkersPanel5_2.add(marker3RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						nonOverlappingMarkersPanel5_2.add(marker4RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						nonOverlappingMarkersPanel5_2.add(marker5RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+						nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						if(numOfMarkers>5) {
+							nonOverlappingMarkersPanel5_2.add(marker6RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+							nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						}
+						if(numOfMarkers>6) {
+							nonOverlappingMarkersPanel5_2.add(marker7RadioButton_5,nonOverlappingMarkersPanelConstraints5_1);
+							nonOverlappingMarkersPanelConstraints5_1.gridx++;
+						}
+						nonOverlappingMarkersPanelConstraints5_1.gridy++;
+						nonOverlappingMarkersPanelConstraints5_1.gridx=0;
+					}
+					
+					if(numOfMarkers>5) {
+						nonOverlappingMarkersPanel6_1.add(marker6Sentence,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridy++;
+						
+						nonOverlappingMarkersPanel6_2.add(marker1RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						nonOverlappingMarkersPanel6_2.add(marker2RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						nonOverlappingMarkersPanel6_2.add(marker3RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						nonOverlappingMarkersPanel6_2.add(marker4RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						nonOverlappingMarkersPanel6_2.add(marker5RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						nonOverlappingMarkersPanel6_2.add(marker6RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+						nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						if(numOfMarkers>6) {
+							nonOverlappingMarkersPanel6_2.add(marker7RadioButton_6,nonOverlappingMarkersPanelConstraints6_1);
+							nonOverlappingMarkersPanelConstraints6_1.gridx++;
+						}
+						nonOverlappingMarkersPanelConstraints6_1.gridy++;
+						nonOverlappingMarkersPanelConstraints6_1.gridx=0;
+					}
+					
+					if(numOfMarkers>6) {
+						nonOverlappingMarkersPanel7_1.add(marker7Sentence,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridy++;
+						
+						nonOverlappingMarkersPanel7_2.add(marker1RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker2RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker3RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker4RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker5RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker6RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanel7_2.add(marker7RadioButton_7,nonOverlappingMarkersPanelConstraints7_1);
+						nonOverlappingMarkersPanelConstraints7_1.gridx++;
+						nonOverlappingMarkersPanelConstraints7_1.gridy++;
+						nonOverlappingMarkersPanelConstraints7_1.gridx=0;
+					}
+					
+					GenericDialogPlus gd2 = new GenericDialogPlus("Marker incompatibilities");
+					switch (numOfMarkers) {
+					case 2:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						break;
+					case 3:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						gd2.addComponent(nonOverlappingMarkersPanel3_1);gd2.addComponent(nonOverlappingMarkersPanel3_2);
+						break;
+					case 4:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						gd2.addComponent(nonOverlappingMarkersPanel3_1);gd2.addComponent(nonOverlappingMarkersPanel3_2);
+						gd2.addComponent(nonOverlappingMarkersPanel4_1);gd2.addComponent(nonOverlappingMarkersPanel4_2);
+						break;
+					case 5:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						gd2.addComponent(nonOverlappingMarkersPanel3_1);gd2.addComponent(nonOverlappingMarkersPanel3_2);
+						gd2.addComponent(nonOverlappingMarkersPanel4_1);gd2.addComponent(nonOverlappingMarkersPanel4_2);
+						gd2.addComponent(nonOverlappingMarkersPanel5_1);gd2.addComponent(nonOverlappingMarkersPanel5_2);
+						break;
+					case 6:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						gd2.addComponent(nonOverlappingMarkersPanel3_1);gd2.addComponent(nonOverlappingMarkersPanel3_2);
+						gd2.addComponent(nonOverlappingMarkersPanel4_1);gd2.addComponent(nonOverlappingMarkersPanel4_2);
+						gd2.addComponent(nonOverlappingMarkersPanel5_1);gd2.addComponent(nonOverlappingMarkersPanel5_2);
+						gd2.addComponent(nonOverlappingMarkersPanel6_1);gd2.addComponent(nonOverlappingMarkersPanel6_2);
+						break;
+					case 7:
+						gd2.addComponent(nonOverlappingMarkersPanel1_1);gd2.addComponent(nonOverlappingMarkersPanel1_2);
+						gd2.addComponent(nonOverlappingMarkersPanel2_1);gd2.addComponent(nonOverlappingMarkersPanel2_2);
+						gd2.addComponent(nonOverlappingMarkersPanel3_1);gd2.addComponent(nonOverlappingMarkersPanel3_2);
+						gd2.addComponent(nonOverlappingMarkersPanel4_1);gd2.addComponent(nonOverlappingMarkersPanel4_2);
+						gd2.addComponent(nonOverlappingMarkersPanel5_1);gd2.addComponent(nonOverlappingMarkersPanel5_2);
+						gd2.addComponent(nonOverlappingMarkersPanel6_1);gd2.addComponent(nonOverlappingMarkersPanel6_2);
+						gd2.addComponent(nonOverlappingMarkersPanel7_1);gd2.addComponent(nonOverlappingMarkersPanel7_2);
+						break;
+					default:
+						break;
+					}
+					
+					gd2.showDialog();
+					
+					if(gd2.wasCanceled()) {
+						return;
+					}
+				}
+
+				
+				byte[] markerCellcompartmentMem = new byte[]{0,0,0,0,0,0,0}; 
+				byte[] channelForMarkerMem = new byte[]{-1,-1,-1,-1,-1,-1,-1};
+				int[][] thresholdForMarkerMem = new int[][]{{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1},{-1,-1}};
+				for(int p=0;p<MAX_NUM_MARKERS;p++) {
+					markerCellcompartmentMem[p] = markerCellcompartment[p];
+					channelForMarkerMem[p] = channelForMarker[p];
+					thresholdForMarkerMem[p][0] = thresholdForMarker[p][0];
+					thresholdForMarkerMem[p][1] = thresholdForMarker[p][1];
+				}
+				
+				for (File imageFileEntry : imageFile.listFiles()) {
+					if (!imageFileEntry.isDirectory()) {
+						String[] currentImageFile = imageFileEntry.getName().split("\\.");
+						String currentSegmentationFile = new String();
+						for (File segmentationFileEntry : segmentationFile.listFiles()) {
+							String[] currentSegmentationFileTest = segmentationFileEntry.getName().split("\\.");
+							if(currentSegmentationFileTest[0].equals(currentImageFile[0])) {currentSegmentationFile = segmentationFileEntry.getName();}
+						}
+						
+						win.close();
+						
+						Opener opener = new Opener();
+						displayImage = opener.openImage(imageFolder+imageFileEntry.getName());
+						
+						int[] dims = displayImage.getDimensions();
+						if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
+							ImageConverter ic = new ImageConverter(displayImage);
+							ic.convertToRGB();
+						}
+						
+						if(displayImage.getType()==4) {
+							displayImage = CompositeConverter.makeComposite(displayImage);
+							dims = displayImage.getDimensions();
+						}
+						
+						if(dims[2]==1) {
+							if((dims[3]>1)&&(dims[4]==1)) {
+								displayImage = HyperStackConverter.toHyperStack(displayImage, dims[3], 1, 1);
+							}
+							if((dims[4]>1)&&(dims[3]==1)) {
+								displayImage = HyperStackConverter.toHyperStack(displayImage, dims[4], 1, 1);
+							}
+							dims = displayImage.getDimensions();
+						}
+						
+						numOfChannels = (byte)dims[2];
+
+						if(numOfChannels>7) {
+							IJ.showMessage("Too many channels", "Images cannot exceed 7 channels");
+							return;
+						}
+						if((dims[3]>1)||(dims[4]>1)) {
+							IJ.showMessage("2D image", "Only 2D multi-channel images are accepted");
+							return;
+						}
+						
+						roiFlag = new short [displayImage.getWidth()][displayImage.getHeight()][3];
+						for(int y=0; y<displayImage.getHeight(); y++)
+						{
+							for(int x=0; x<displayImage.getWidth(); x++)
+							{
+								roiFlag[x][y][0] = -1;
+								roiFlag[x][y][1] = -1;
+								roiFlag[x][y][2] = -1;
+							}
+						}
+						
+						//Build GUI
+						/*SwingUtilities.invokeLater(
+								new Runnable() {
+									public void run() {
+										win = new CustomWindow(displayImage);
+										win.pack();
+									}
+								});*/
+						
+						initializeMarkerButtons();
+						int actualNumOfMarkers = numOfMarkers;
+						ImagePlus segmentedImage = opener.openImage(segmentationFolder+currentSegmentationFile);
+						loadNucleiSegmentations(segmentedImage);
+						
+						currentMarker=0;
+						for(int p=0;p<actualNumOfMarkers;p++) {
+							addNewMarker();
+							updateAnnotateMarker(numOfMarkers-1);
+							if(channelForMarkerMem[p]>(-1)) {
+								List<Polygon> [] cellComponentInEachClass = new ArrayList[MAX_NUM_CLASSES];
+								for(int i=0;i<numOfClasses;i++) {
+									cellComponentInEachClass[i] = new ArrayList<Polygon>();
+								}
+								for(int i=0;i<numOfClasses;i++) {
+									for(int j=0;j<objectsInEachClass[i].size();j++) {
+										Polygon fp = new Polygon();
+										cellComponentInEachClass[i].add(fp);
+									}
+								}
+								int[][][] nuclearComponent = computeNuclearComponent();
+								if(markerCellcompartmentMem[p]==0) {
+									for(int i=0;i<numOfClasses;i++) {
+										for(int y=0;y<displayImage.getHeight();y++) {
+											for(int x=0;x<displayImage.getWidth();x++) {
+												if(nuclearComponent[i][x][y]>0) {
+													cellComponentInEachClass[i].get(nuclearComponent[i][x][y]-1).addPoint(x, y);
+												}
+											}
+										}
+									}
+								}
+								else if(markerCellcompartmentMem[p]==1) {
+									int[][][] membranarComponent = computeMembranarComponent(nuclearComponent);
+									for(int i=0;i<numOfClasses;i++) {
+										for(int y=0;y<displayImage.getHeight();y++) {
+											for(int x=0;x<displayImage.getWidth();x++) {
+												if(membranarComponent[i][x][y]>0) {
+													cellComponentInEachClass[i].get(membranarComponent[i][x][y]-1).addPoint(x, y);
+												}
+											}
+										}
+									}
+								}
+								else if(markerCellcompartmentMem[p]==2) {
+									int[][][] membranarForCytoplasmicComponent = computeMembranarComponent(nuclearComponent), cytoplasmicComponent = computeCytoplasmicComponent(nuclearComponent, membranarForCytoplasmicComponent);
+									for(int i=0;i<numOfClasses;i++) {
+										for(int y=0;y<displayImage.getHeight();y++) {
+											for(int x=0;x<displayImage.getWidth();x++) {
+												if(cytoplasmicComponent[i][x][y]>0) {
+													cellComponentInEachClass[i].get(cytoplasmicComponent[i][x][y]-1).addPoint(x, y);
+												}
+											}
+										}
+									}
+								}
+								chosenChannel = channelForMarkerMem[p];
+								areaThresholdingScrollBar.setValue(thresholdForMarkerMem[p][0]);
+								intensityThresholdingScrollBar.setValue(thresholdForMarkerMem[p][1]);
+								computeIntensityThreshodForEachObject(cellComponentInEachClass);
+								roiActivationAndDeactivationBasedOnThresholding();
+							}
+							updateModeRadioButtons(1);
+						}
+						
+						// incompatibilities between markers
+						if(numOfMarkers>1) {
+							if(marker2RadioButton_1.isSelected()) {removeIncompatibility(0,1);}
+							if(marker3RadioButton_1.isSelected()) {removeIncompatibility(0,2);}
+							if(marker4RadioButton_1.isSelected()) {removeIncompatibility(0,3);}
+							if(marker5RadioButton_1.isSelected()) {removeIncompatibility(0,4);}
+							if(marker6RadioButton_1.isSelected()) {removeIncompatibility(0,5);}
+							if(marker7RadioButton_1.isSelected()) {removeIncompatibility(0,6);}
+							if(marker1RadioButton_2.isSelected()) {removeIncompatibility(1,0);}
+							if(marker3RadioButton_2.isSelected()) {removeIncompatibility(1,2);}
+							if(marker4RadioButton_2.isSelected()) {removeIncompatibility(1,3);}
+							if(marker5RadioButton_2.isSelected()) {removeIncompatibility(1,4);}
+							if(marker6RadioButton_2.isSelected()) {removeIncompatibility(1,5);}
+							if(marker7RadioButton_2.isSelected()) {removeIncompatibility(1,6);}
+						}
+						if(numOfMarkers>2) {
+							if(marker1RadioButton_3.isSelected()) {removeIncompatibility(2,0);}
+							if(marker2RadioButton_3.isSelected()) {removeIncompatibility(2,1);}
+							if(marker4RadioButton_3.isSelected()) {removeIncompatibility(2,3);}
+							if(marker5RadioButton_3.isSelected()) {removeIncompatibility(2,4);}
+							if(marker6RadioButton_3.isSelected()) {removeIncompatibility(2,5);}
+							if(marker7RadioButton_3.isSelected()) {removeIncompatibility(2,6);}
+						}
+						if(numOfMarkers>3) {
+							if(marker1RadioButton_4.isSelected()) {removeIncompatibility(3,0);}
+							if(marker2RadioButton_4.isSelected()) {removeIncompatibility(3,1);}
+							if(marker3RadioButton_4.isSelected()) {removeIncompatibility(3,2);}
+							if(marker5RadioButton_4.isSelected()) {removeIncompatibility(3,4);}
+							if(marker6RadioButton_4.isSelected()) {removeIncompatibility(3,5);}
+							if(marker7RadioButton_4.isSelected()) {removeIncompatibility(3,6);}
+						}
+						if(numOfMarkers>4) {
+							if(marker1RadioButton_5.isSelected()) {removeIncompatibility(4,0);}
+							if(marker2RadioButton_5.isSelected()) {removeIncompatibility(4,1);}
+							if(marker3RadioButton_5.isSelected()) {removeIncompatibility(4,2);}
+							if(marker4RadioButton_5.isSelected()) {removeIncompatibility(4,3);}
+							if(marker6RadioButton_5.isSelected()) {removeIncompatibility(4,5);}
+							if(marker7RadioButton_5.isSelected()) {removeIncompatibility(4,6);}
+						}
+						if(numOfMarkers>5) {
+							if(marker1RadioButton_6.isSelected()) {removeIncompatibility(5,0);}
+							if(marker2RadioButton_6.isSelected()) {removeIncompatibility(5,1);}
+							if(marker3RadioButton_6.isSelected()) {removeIncompatibility(5,2);}
+							if(marker4RadioButton_6.isSelected()) {removeIncompatibility(5,3);}
+							if(marker5RadioButton_6.isSelected()) {removeIncompatibility(5,4);}
+							if(marker7RadioButton_6.isSelected()) {removeIncompatibility(5,6);}
+						}
+						if(numOfMarkers>6) {
+							if(marker2RadioButton_7.isSelected()) {removeIncompatibility(6,1);}
+							if(marker3RadioButton_7.isSelected()) {removeIncompatibility(6,2);}
+							if(marker4RadioButton_7.isSelected()) {removeIncompatibility(6,3);}
+							if(marker5RadioButton_7.isSelected()) {removeIncompatibility(6,4);}
+							if(marker6RadioButton_7.isSelected()) {removeIncompatibility(6,5);}
+						}
+						saveNucleiIdentification(markerFolder+currentSegmentationFile.split("\\.")[0]+".tiff");
+						
+						if(measurementsBatchProcess) {
+							markerMeasurements(measurementsFolder+currentSegmentationFile.split("\\.")[0]+".txt");
+						}
+						
+					}
+				}
+			}
+		}
+	}
+	/** batch process markers */ 
+	private void batchMeasurements(int mode)
+	{
+		imageFolder = "Null";
+		segmentationFolder = "Null";
+		markerFolder = "Null";
+		measurementsFolder = "Null";
+
+		/** JButton for batch processing */
+		JButton imageFolderButton = new JButton("Image folder");
+		JButton segmentationFolderButton = new JButton("Segmentation folder");
+		JButton markerFolderButton = new JButton("Marker folder");
+		JButton measurementsFolderButton = new JButton("Measurements folder");
+
+		JTextArea imageFolderQuestion = new JTextArea("Where is the folder with the input images?");
+		JTextArea segmentationFolderQuestion = new JTextArea("Where is the folder with the segmented input images?");
+		JTextArea markerFolderQuestion = new JTextArea("Where is the folder with the marker images?");
+		JTextArea measurmentsFolderQuestion = new JTextArea("Where is the destination folder for the measurements?");
+		imageFolderQuestion.setEditable(false);
+		segmentationFolderQuestion.setEditable(false);
+		markerFolderQuestion.setEditable(false);
+		measurmentsFolderQuestion.setEditable(false);
+		
+		JPanel batchPanel = new JPanel();
+		batchPanel.setBorder(BorderFactory.createTitledBorder(""));
+		GridBagLayout batchPanelLayout = new GridBagLayout();
+		GridBagConstraints batchPanelConstraints = new GridBagConstraints();
+		batchPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+		batchPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+		batchPanelConstraints.gridwidth = 1;
+		batchPanelConstraints.gridheight = 1;
+		batchPanelConstraints.gridx = 0;
+		batchPanelConstraints.gridy = 0;
+		batchPanel.setLayout(batchPanelLayout);
+
+		batchPanel.add(imageFolderQuestion,batchPanelConstraints);
+		batchPanelConstraints.gridx++;
+		batchPanel.add(imageFolderButton,batchPanelConstraints);
+		batchPanelConstraints.gridy++;
+		batchPanelConstraints.gridx=0;
+		batchPanel.add(segmentationFolderQuestion,batchPanelConstraints);
+		batchPanelConstraints.gridx++;
+		batchPanel.add(segmentationFolderButton,batchPanelConstraints);
+		batchPanelConstraints.gridy++;
+		batchPanelConstraints.gridx=0;
+		batchPanel.add(markerFolderQuestion,batchPanelConstraints);
+		batchPanelConstraints.gridx++;
+		batchPanel.add(markerFolderButton,batchPanelConstraints);
+		batchPanelConstraints.gridy++;
+		batchPanelConstraints.gridx=0;
+		batchPanel.add(measurmentsFolderQuestion,batchPanelConstraints);
+		batchPanelConstraints.gridx++;
+		batchPanel.add(measurementsFolderButton,batchPanelConstraints);
+		batchPanelConstraints.gridy++;
+
+		GenericDialogPlus gd = new GenericDialogPlus("Batch processing for measurements");
+		gd.addComponent(batchPanel);
+
+		imageFolderButton.addActionListener(new ActionListener() {
+
+			@Override
+			public void actionPerformed(ActionEvent arg0) {
+				DirectoryChooser imageChooser = new DirectoryChooser("Input images folder");
+				imageFolder = imageChooser.getDirectory();
+			}
+		});
+
+		segmentationFolderButton.addActionListener(new ActionListener() {
+
+			@Override
+			public void actionPerformed(ActionEvent arg0) {
+				DirectoryChooser segmentationChooser = new DirectoryChooser("Segmentation images folder");
+				segmentationFolder = segmentationChooser.getDirectory();
+			}
+		});
+		markerFolderButton.addActionListener(new ActionListener() {
+
+			@Override
+			public void actionPerformed(ActionEvent arg0) {
+				DirectoryChooser markerChooser = new DirectoryChooser("Marker images folder");
+				markerFolder = markerChooser.getDirectory();
+			}
+		});
+		measurementsFolderButton.addActionListener(new ActionListener() {
+
+			@Override
+			public void actionPerformed(ActionEvent arg0) {
+				DirectoryChooser measurementsChooser = new DirectoryChooser("Measurements folder");
+				measurementsFolder = measurementsChooser.getDirectory();
+			}
+		});
+
+		gd.showDialog();
+
+		if (gd.wasCanceled()) {
+			for( ActionListener al : imageFolderButton.getActionListeners() ) {imageFolderButton.removeActionListener( al );}
+			for( ActionListener al : segmentationFolderButton.getActionListeners() ) {segmentationFolderButton.removeActionListener( al );}
+			for( ActionListener al : markerFolderButton.getActionListeners() ) {markerFolderButton.removeActionListener( al );}
+			for( ActionListener al : measurementsFolderButton.getActionListeners() ) {measurementsFolderButton.removeActionListener( al );}
+			return;
+		}
+
+		if (gd.wasOKed()) {
+			for( ActionListener al : imageFolderButton.getActionListeners() ) {imageFolderButton.removeActionListener( al );}
+			for( ActionListener al : segmentationFolderButton.getActionListeners() ) {segmentationFolderButton.removeActionListener( al );}
+			for( ActionListener al : markerFolderButton.getActionListeners() ) {markerFolderButton.removeActionListener( al );}
+			for( ActionListener al : measurementsFolderButton.getActionListeners() ) {measurementsFolderButton.removeActionListener( al );}
+			if(imageFolder=="Null") {
+				IJ.showMessage("You need to define a folder with the input images to process.");
+				return;
+			}
+			if(segmentationFolder=="Null") {
+				IJ.showMessage("You need to define a folder with the segmented input images to process.");
+				return;
+			}
+			if(markerFolder=="Null") {
+				IJ.showMessage("You need to define a folder with the marker images associated with the input images to process.");
+				return;
+			}
+			if(measurementsFolder=="Null") {
+				IJ.showMessage("You need to define a destination folder for the measurements.");
+				return;
+			}
+			File imageFile = new File(imageFolder), segmentationFile = new File(segmentationFolder), markerFile = new File(markerFolder), measurementsFile = new File(measurementsFolder);
+			for (File imageFileEntry : imageFile.listFiles()) {
+				if (!imageFileEntry.isDirectory()) {
+					String[] currentImageFile = imageFileEntry.getName().split("\\.");
+					boolean ok1=false, ok2=false;
+					for (File segmentationFileEntry : segmentationFile.listFiles()) {
+						String[] currentSegmentationFile = segmentationFileEntry.getName().split("\\.");
+						if(currentSegmentationFile[0].equals(currentImageFile[0])) {ok1=true;}
+					}
+					for (File markerFileEntry : markerFile.listFiles()) {
+						String[] markerSegmentationFile = markerFileEntry.getName().split("\\.");
+						if(markerSegmentationFile[0].equals(currentImageFile[0])) {ok2=true;}
+					}
+					if(!ok1 || !ok2) {
+						IJ.showMessage("For each input image in the input image folder, there must be a segmentation image with the same name in the segmentation folder and a marker image with the same name in the marker folder.");
+						return;
+					}
+				}
+			}
+
+
+			for (File imageFileEntry : imageFile.listFiles()) {
+				if (!imageFileEntry.isDirectory()) {
+					String[] currentImageFile = imageFileEntry.getName().split("\\.");
+					String currentSegmentationFile = new String(), currentMarkerFile = new String();
+					for (File segmentationFileEntry : segmentationFile.listFiles()) {
+						String[] currentSegmentationFileTest = segmentationFileEntry.getName().split("\\.");
+						if(currentSegmentationFileTest[0].equals(currentImageFile[0])) {currentSegmentationFile = segmentationFileEntry.getName();}
+					}
+					for (File markerFileEntry : markerFile.listFiles()) {
+						String[] currentmarkerFileTest = markerFileEntry.getName().split("\\.");
+						if(currentmarkerFileTest[0].equals(currentImageFile[0])) {currentMarkerFile = markerFileEntry.getName();}
+					}
+					win.close();
+
+					Opener opener = new Opener();
+					displayImage = opener.openImage(imageFolder+imageFileEntry.getName());
+
+					int[] dims = displayImage.getDimensions();
+					if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
+						ImageConverter ic = new ImageConverter(displayImage);
+						ic.convertToRGB();
+					}
+
+					if(displayImage.getType()==4) {
+						displayImage = CompositeConverter.makeComposite(displayImage);
+						dims = displayImage.getDimensions();
+					}
+
+					if(dims[2]==1) {
+						if((dims[3]>1)&&(dims[4]==1)) {
+							displayImage = HyperStackConverter.toHyperStack(displayImage, dims[3], 1, 1);
+						}
+						if((dims[4]>1)&&(dims[3]==1)) {
+							displayImage = HyperStackConverter.toHyperStack(displayImage, dims[4], 1, 1);
+						}
+						dims = displayImage.getDimensions();
+					}
+
+					numOfChannels = (byte)dims[2];
+
+					if(numOfChannels>7) {
+						IJ.showMessage("Too many channels", "Images cannot exceed 7 channels");
+						return;
+					}
+					if((dims[3]>1)||(dims[4]>1)) {
+						IJ.showMessage("2D image", "Only 2D multi-channel images are accepted");
+						return;
+					}
+
+					roiFlag = new short [displayImage.getWidth()][displayImage.getHeight()][3];
+					for(int y=0; y<displayImage.getHeight(); y++)
+					{
+						for(int x=0; x<displayImage.getWidth(); x++)
+						{
+							roiFlag[x][y][0] = -1;
+							roiFlag[x][y][1] = -1;
+							roiFlag[x][y][2] = -1;
+						}
+					}
+
+					ImagePlus segmentedImage = opener.openImage(segmentationFolder+currentSegmentationFile);
+					loadNucleiSegmentations(segmentedImage);
+
+					ImagePlus markerImage = opener.openImage(markerFolder+currentMarkerFile);
+					loadMarkerIdentifications(markerImage);
+
+					if(mode==0) {classMeasurements(measurementsFolder+currentSegmentationFile.split("\\.")[0]+".txt");}
+					else {markerMeasurements(measurementsFolder+currentSegmentationFile.split("\\.")[0]+".txt");}
+					
+				}
+			}
+		}
+	}
+	/** ask user to set intensity thresholding */ 
+	private boolean addIntensityThresholdingWindow()
+	{
+		/** buttons */
+		JTextArea intensityThresholdQuestion = new JTextArea("What is the intensity threshold?");
+		intensityThresholdQuestion.setEditable(false);
+		JTextArea intensityThresholdTextField = new JTextArea();
+		intensityThresholdTextField.setText("" + intensityThresholdingScrollBar.getValue());
+		
+		JPanel thresholdingPanel = new JPanel();
+		thresholdingPanel.setBorder(BorderFactory.createTitledBorder(""));
+		GridBagLayout thresholdingPanelLayout = new GridBagLayout();
+		GridBagConstraints thresholdingPanelConstraints = new GridBagConstraints();
+		thresholdingPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+		thresholdingPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+		thresholdingPanelConstraints.gridwidth = 1;
+		thresholdingPanelConstraints.gridheight = 1;
+		thresholdingPanelConstraints.gridx = 0;
+		thresholdingPanelConstraints.gridy = 0;
+		thresholdingPanel.setLayout(thresholdingPanelLayout);
+		
+		thresholdingPanel.add(intensityThresholdQuestion,thresholdingPanelConstraints);
+		thresholdingPanelConstraints.gridy++;
+		intensityThresholdTextField.setPreferredSize( new Dimension( 50, 24 ) );
+		thresholdingPanel.add(intensityThresholdTextField,thresholdingPanelConstraints);
+		
+		GenericDialogPlus gd = new GenericDialogPlus("Intensity threshold");
+		gd.addComponent(thresholdingPanel);
+		gd.showDialog();
+
+		if (gd.wasCanceled())
+			return false;
+		
+		// update cell compartment marker status
+		int threshold = Integer.valueOf(intensityThresholdTextField.getText());
+		if(threshold<0) {
+			IJ.showMessage("The threshold must be positive");
+			return false;}
+		if(threshold>intensityThresholdingScrollBar.getMaximum()) {
+			IJ.showMessage("The threshold must be inferior than the maximum intensity");
+			return false;}
+		
+		intensityThresholdingScrollBar.setValue(threshold);
+		intensityThresholdingTextArea.setText("" + threshold);
+		thresholdForMarker[numOfMarkers-1][1] = threshold;
+		
+		return true;
+	}
+	/** ask user to set intensity thresholding */ 
+	private boolean addAreaThresholdingWindow()
+	{
+		/** buttons */
+		JTextArea areaThresholdQuestion = new JTextArea("What is the area threshold (%)?");
+		areaThresholdQuestion.setEditable(false);
+		JTextArea areaThresholdTextField = new JTextArea();
+		areaThresholdTextField.setText("" + areaThresholdingScrollBar.getValue());
+		
+		JPanel thresholdingPanel = new JPanel();
+		thresholdingPanel.setBorder(BorderFactory.createTitledBorder(""));
+		GridBagLayout thresholdingPanelLayout = new GridBagLayout();
+		GridBagConstraints thresholdingPanelConstraints = new GridBagConstraints();
+		thresholdingPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+		thresholdingPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+		thresholdingPanelConstraints.gridwidth = 1;
+		thresholdingPanelConstraints.gridheight = 1;
+		thresholdingPanelConstraints.gridx = 0;
+		thresholdingPanelConstraints.gridy = 0;
+		thresholdingPanel.setLayout(thresholdingPanelLayout);
+		
+		thresholdingPanel.add(areaThresholdQuestion,thresholdingPanelConstraints);
+		thresholdingPanelConstraints.gridy++;
+		areaThresholdTextField.setPreferredSize( new Dimension( 50, 24 ) );
+		thresholdingPanel.add(areaThresholdTextField,thresholdingPanelConstraints);
+		
+		GenericDialogPlus gd = new GenericDialogPlus("Area threshold");
+		gd.addComponent(thresholdingPanel);
+		gd.showDialog();
+
+		if (gd.wasCanceled())
+			return false;
+		
+		// update cell compartment marker status
+		int threshold = Integer.valueOf(areaThresholdTextField.getText());
+		if(threshold<0) {
+			IJ.showMessage("The threshold must be positive");
+			return false;}
+		if(threshold>100) {
+			IJ.showMessage("The threshold must be inferior or equal to 100%");
+			return false;}
+		
+		areaThresholdingScrollBar.setValue(threshold);
+		areaThresholdingTextArea.setText("" + threshold);
+		thresholdForMarker[numOfMarkers-1][0] = threshold;
+		
+		return true;
 	}
 	/**
 	 * Draw the objects outline on the display image
@@ -4050,9 +5005,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 		markersOverlay.add(displayedRoi);
 	}
 		
-	private List<Point> drawNewObjectContour(float[] xPointsInit, float[] yPointsInit, int classId)
+	private List<Point> drawNewObjectContour(int[] xPointsInit, int[] yPointsInit, int classId)
 	{
-		long  Time1 = System.currentTimeMillis();
+		List<Point> ptsToRemove = new ArrayList<Point>();
+		
+		PointRoi pr = new PointRoi(xPointsInit, yPointsInit, xPointsInit.length);
+		ShapeRoi roi = new ShapeRoi(pr);
+		
+		// add the roi to the overlay
+		roi.setStrokeColor(colors[classColors[classId]]);
+		overlay.add(roi);
+		markersOverlay.add(roi );
+		
+		/*long  Time1 = System.currentTimeMillis();
 		// list of points to remove corresponding to isolated points from the rest of the nucleus
 		// also use this as a flag flag to tell the program if the nucleus has been created or not, when the shape of the nucleus cannot be recapitulated with a contour (at least with my limited criteria :)
 		List<Point> ptsToRemove = new ArrayList<Point>();
@@ -4087,7 +5052,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				if(ptToAdd) {
 					nbNeighborsToAdd++;
-					Point pt = new Point((int)(xPointsInit[u]+1),(int)(yPointsInit[u]));
+					Point pt = new Point(xPointsInit[u]+1,yPointsInit[u]);
 					ptsToAdd.add(pt);
 				}
 			}
@@ -4100,7 +5065,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				if(ptToAdd) {
 					nbNeighborsToAdd++;
-					Point pt = new Point((int)(xPointsInit[u]),(int)(yPointsInit[u]+1));
+					Point pt = new Point(xPointsInit[u],yPointsInit[u]+1);
 					ptsToAdd.add(pt);
 				}
 			}
@@ -4113,14 +5078,14 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				if(ptToAdd) {
 					nbNeighborsToAdd++;
-					Point pt = new Point((int)(xPointsInit[u]+1),(int)(yPointsInit[u]+1));
+					Point pt = new Point(xPointsInit[u]+1,yPointsInit[u]+1);
 					ptsToAdd.add(pt);
 				}
 			}
 		}
 		long  Time2 = System.currentTimeMillis();
 		// initialization of the nucleus region as the points in the nucleus plus the pixels to be added for visualization
-		float[] xPoints = new float[xPointsInit.length+nbNeighborsToAdd], yPoints = new float[xPointsInit.length+nbNeighborsToAdd];
+		int[] xPoints = new int[xPointsInit.length+nbNeighborsToAdd], yPoints = new int[xPointsInit.length+nbNeighborsToAdd];
 		int currentIndex=0;
 		for (int u=0; u<xPointsInit.length; u++) {
 			xPoints[currentIndex] = xPointsInit[u];
@@ -4146,13 +5111,13 @@ public class Annotater<T extends RealType<T>> implements Command {
 		int originalNbPtsOutline=0;
 		int[] insideXvalues = new int[xPoints.length],insideYvalues = new int[xPoints.length];
 		for (int u=0; u<xPoints.length; u++) {
-			insideXvalues[u] = (int)xPoints[u];
-			insideYvalues[u] = (int)yPoints[u];
+			insideXvalues[u] = xPoints[u];
+			insideYvalues[u] = yPoints[u];
 			if((nbNeighbors[u]<8)&&(nbNeighbors[u]>2)) {
 				originalNbPtsOutline++;
 			}
 			if(nbNeighbors[u]==1){
-				Point pt = new Point((int)xPoints[u],(int)yPoints[u]);
+				Point pt = new Point(xPoints[u],yPoints[u]);
 				ptsToRemove.add(pt);
 			}
 		}
@@ -4167,8 +5132,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		long  Time3 = System.currentTimeMillis();
 		while(keepComputing) {
 			// get points part of the nucleus outline
-			float[] xPointsOutline = new float[originalNbPtsOutline];
-			float[] yPointsOutline = new float[originalNbPtsOutline];
+			int[] xPointsOutline = new int[originalNbPtsOutline];
+			int[] yPointsOutline = new int[originalNbPtsOutline];
 			// definition over two loops if we define a different initialization
 			int nbPtsOutline=0;
 			for (int u=(int)(xPoints.length*multiplier); u<xPoints.length; u++) {
@@ -4192,7 +5157,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				int[] indexesToRemove = new int[nbPtsOutline];
 				int nbPtsToRemove = 0;
 				for(int u=0;u<xPointsOutline.length;u++) {
-					Point pt = new Point((int)(xPointsOutline[u]),(int)(yPointsOutline[u]));
+					Point pt = new Point(xPointsOutline[u],yPointsOutline[u]);
 					outlinePts.add(pt);
 				}
 				if(multiplier<0.3) {
@@ -4273,8 +5238,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				// remove the pixels to be removed in the small 4-loops
 				if(nbPtsToRemove>0){
-					float[] xUpdatedPointsOutline = new float[nbPtsOutline-nbPtsToRemove];
-					float[] yUpdatedPointsOutline = new float[nbPtsOutline-nbPtsToRemove];
+					int[] xUpdatedPointsOutline = new int[nbPtsOutline-nbPtsToRemove];
+					int[] yUpdatedPointsOutline = new int[nbPtsOutline-nbPtsToRemove];
 					int index = 0;
 					for(int u=0;u<nbPtsOutline;u++) {
 						if(indexesToRemove[u]<1) {
@@ -4286,8 +5251,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 					nbPtsOutline = xUpdatedPointsOutline.length;
 					xPointsOutline = null;
 					yPointsOutline = null;
-					xPointsOutline = new float[nbPtsOutline];
-					yPointsOutline = new float[nbPtsOutline];
+					xPointsOutline = new int[nbPtsOutline];
+					yPointsOutline = new int[nbPtsOutline];
 					for(int u=0;u<nbPtsOutline;u++) {
 						xPointsOutline[u] = xUpdatedPointsOutline[u];
 						yPointsOutline[u] = yUpdatedPointsOutline[u];
@@ -4295,12 +5260,12 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 			}
 			// sort the points in the nucleus outline in order to get nice polygon rois
-			float[] xSortedPointsOutline = new float[nbPtsOutline];
-			float[] ySortedPointsOutline = new float[nbPtsOutline];
+			int[] xSortedPointsOutline = new int[nbPtsOutline];
+			int[] ySortedPointsOutline = new int[nbPtsOutline];
 			xSortedPointsOutline[0] = xPointsOutline[0];
 			ySortedPointsOutline[0] = yPointsOutline[0];
-			xPointsOutline[0] = (float)(-1.5);
-			yPointsOutline[0] = (float)(-1.5);
+			xPointsOutline[0] = -2;
+			yPointsOutline[0] = -2;
 			int refIndex = -1;
 			double minDistance = 1.1;
 			// start from point of index 0 and than find the closest point, point by point to finally get the path around the nucleus
@@ -4318,8 +5283,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(refIndex>(-1)) {
 					xSortedPointsOutline[u] = xPointsOutline[refIndex];
 					ySortedPointsOutline[u] = yPointsOutline[refIndex];
-					xPointsOutline[refIndex] = (float)(-1.5);
-					yPointsOutline[refIndex] = (float)(-1.5);
+					xPointsOutline[refIndex] = -2;
+					yPointsOutline[refIndex] = -2;
 				}
 				else {
 					minDistance = 1.5;
@@ -4334,8 +5299,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 					if(refIndex>(-1)) {
 						xSortedPointsOutline[u] = xPointsOutline[refIndex];
 						ySortedPointsOutline[u] = yPointsOutline[refIndex];
-						xPointsOutline[refIndex] = (float)(-1.5);
-						yPointsOutline[refIndex] = (float)(-1.5);
+						xPointsOutline[refIndex] = -2;
+						yPointsOutline[refIndex] = -2;
 					}
 				}
 			}
@@ -4373,8 +5338,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 							maxValidIndex++;
 							xSortedPointsOutline[refIndexForMissingPt] = xPointsOutline[u];
 							ySortedPointsOutline[refIndexForMissingPt] = yPointsOutline[u];
-							xPointsOutline[u] = (float)(-1.5);
-							yPointsOutline[u] = (float)(-1.5);
+							xPointsOutline[u] = -2;
+							yPointsOutline[u] = -2;
 						}
 					}
 					if((xSortedPointsOutline[nbPtsOutline-1]<0.001)&&(ySortedPointsOutline[nbPtsOutline-1]<0.001)) {
@@ -4383,8 +5348,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 						}
 					}
 					// defines polygon roi associated with contour
-					FloatPolygon fpOutline = new FloatPolygon(xSortedPointsOutline,ySortedPointsOutline);
-					PolygonRoi fpRoi = new PolygonRoi(fpOutline, Roi.FREEROI);
+					PolygonRoi fpRoi = new PolygonRoi(xSortedPointsOutline,ySortedPointsOutline,xSortedPointsOutline.length,Roi.FREEROI);
 					ImageProcessor mask = fpRoi.getMask();
 					double xMin = displayImage.getWidth(), xMax = 0, yMin = displayImage.getHeight(), yMax = 0;
 					for(int u=0;u<xSortedPointsOutline.length;u++) {
@@ -4429,8 +5393,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 							}
 						}
 						// get points part of the nucleus outline
-						float[] xMaskPointsOutline = new float[nbMaskPtsOutline];
-						float[] yMaskPointsOutline = new float[nbMaskPtsOutline];
+						int[] xMaskPointsOutline = new int[nbMaskPtsOutline];
+						int[] yMaskPointsOutline = new int[nbMaskPtsOutline];
 
 						int maskIndex=0;
 						for (int u=0; u<nbMaskPtsOutline; u++) {
@@ -4502,8 +5466,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			}
 			else {
 				// defines polygon roi associated with contour
-				FloatPolygon fpOutline = new FloatPolygon(xSortedPointsOutline,ySortedPointsOutline);
-				PolygonRoi fpRoi = new PolygonRoi(fpOutline, Roi.FREEROI);
+				PolygonRoi fpRoi = new PolygonRoi(xSortedPointsOutline,ySortedPointsOutline,xSortedPointsOutline.length,Roi.FREEROI);
 				ImageProcessor mask = fpRoi.getMask();
 				ImageStatistics stats = mask.getStatistics();
 				double xMin = displayImage.getWidth(), xMax = 0, yMin = displayImage.getHeight(), yMax = 0;
@@ -4556,8 +5519,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 						}
 					}
 					// get points part of the nucleus outline
-					float[] xMaskPointsOutline = new float[nbMaskPtsOutline];
-					float[] yMaskPointsOutline = new float[nbMaskPtsOutline];
+					int[] xMaskPointsOutline = new int[nbMaskPtsOutline];
+					int[] yMaskPointsOutline = new int[nbMaskPtsOutline];
 
 					int maskIndex=0;
 					for (int u=0; u<nbMaskPtsOutline; u++) {
@@ -4572,19 +5535,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 					int nbCommonPtsNoShift=0, nbCommonPtsxShift=0, nbCommonPtsyShift=0, nbCommonPtsxyShift=0;
 					for(int u=0;u<xSortedPointsOutline.length;u++) {
 						for(int v=0;v<nbMaskPtsOutline;v++) {
-							if((((int)xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v])&&(((int)ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v])) {
+							if(((xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v])&&((ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v])) {
 								nbCommonPtsNoShift++;
 							}
 							else {
-								if((((int)xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v]+1)&&(((int)ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v])) {
+								if(((xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v]+1)&&((ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v])) {
 									nbCommonPtsxShift++;
 								}
 								else {
-									if((((int)xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v])&&(((int)ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v]+1)) {
+									if(((xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v])&&((ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v]+1)) {
 										nbCommonPtsyShift++;
 									}
 									else {
-										if((((int)xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v]+1)&&(((int)ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v]+1)) {
+										if(((xSortedPointsOutline[u]-xMin)==xMaskPointsOutline[v]+1)&&((ySortedPointsOutline[u]-yMin)==yMaskPointsOutline[v]+1)) {
 											nbCommonPtsxyShift++;
 										}
 									}
@@ -4614,7 +5577,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				markersOverlay.add(roi );
 				keepComputing = false;
 			}
-		}
+		}*/
 		long  Time4 = System.currentTimeMillis();
 		/*IJ.log("First interval: " + (Time2-Time1));
 		IJ.log("Secondinterval: " + (Time3-Time2));
@@ -4628,16 +5591,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 	private void removeRoi(int classId, int roiId, int overlayId)
 	{
 		objectsInEachClass[classId].remove(roiId);
-		for(int j=0;j<numOfMarkers;j++) {
-			for(int p=0;p<4;p++) {
+		for(byte j=0;j<numOfMarkers;j++) {
+			for(byte p=0;p<4;p++) {
 				for(int i = 0; i < positiveNucleiForEachMarker[j][p].size(); i++) {
 					if(positiveNucleiForEachMarker[j][p].get(i)>overlayId) {
-						positiveNucleiForEachMarker[j][p].set(i, positiveNucleiForEachMarker[j][p].get(i)-1);
+						positiveNucleiForEachMarker[j][p].set(i, (short)(positiveNucleiForEachMarker[j][p].get(i)-1));
 					}
 					else{
 						if(positiveNucleiForEachMarker[j][p].get(i)==overlayId) {
 							positiveNucleiForEachMarker[j][p].remove(i);
-							objectsForEachMarkerAndEachPattern[j][p].remove(i);
 							i--;
 						}
 					}
@@ -4726,12 +5688,14 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					else {
 						// copy rois to merge
-						FloatPolygon r1 = objectsInEachClass[firstObjectToMerge_class].get(firstObjectToMerge_classId),
+						//Polygon r1 = objectsInEachClass[firstObjectToMerge_class].get(firstObjectToMerge_classId).getPolygon(),
+							//	r2 = objectsInEachClass[firstObjectToMerge_class].get(roiFlag[pts[0].x][pts[0].y][1]).getPolygon();
+						Point[] r1 = objectsInEachClass[firstObjectToMerge_class].get(firstObjectToMerge_classId),
 								r2 = objectsInEachClass[firstObjectToMerge_class].get(roiFlag[pts[0].x][pts[0].y][1]);
 						boolean okDistance = false;
-						for (int u=0; u<r1.npoints; u++) {
-							for (int v=0; v<r2.npoints; v++) {
-								double currentDistance = java.lang.Math.sqrt(java.lang.Math.pow(r1.xpoints[u]-r2.xpoints[v],2.)+java.lang.Math.pow(r1.ypoints[u]-r2.ypoints[v],2.)); 
+						for (int u=0; u<r1.length; u++) {
+							for (int v=0; v<r2.length; v++) {
+								double currentDistance = java.lang.Math.sqrt(java.lang.Math.pow(r1[u].x-r2[v].x,2.)+java.lang.Math.pow(r1[u].y-r2[v].y,2.)); 
 								if(currentDistance<(1.1)){
 									okDistance = true;
 								}
@@ -4749,21 +5713,21 @@ public class Annotater<T extends RealType<T>> implements Command {
 							removeRoi(firstObjectToMerge_class, secondObjectToMerge_classId, secondObjectToMerge_overlayId);
 
 							// create new roi with the 2 objects merged together
-							float[] xPoints = new float[r1.npoints + r2.npoints];
-							float[] yPoints = new float[r1.npoints + r2.npoints];
+							int[] xPoints = new int[r1.length + r2.length];
+							int[] yPoints = new int[r1.length + r2.length];
 							int ptIndex = 0;
-							for (int u=0; u<r1.npoints; u++) {
+							for (int u=0; u<r1.length; u++) {
 								/*PointRoi pt = new PointRoi(r1Pts[u].x,r1Pts[u].y);
 							overlay.add(pt);*/
-								xPoints[ptIndex] = r1.xpoints[u];
-								yPoints[ptIndex] = r1.ypoints[u];
+								xPoints[ptIndex] = r1[u].x;
+								yPoints[ptIndex] = r1[u].y;
 								ptIndex++;
 							}
-							for (int u=0; u<r2.npoints; u++) {
+							for (int u=0; u<r2.length; u++) {
 								/*PointRoi pt = new PointRoi(r2Pts[u].x,r2Pts[u].y);
 							overlay.add(pt);*/
-								xPoints[ptIndex] = r2.xpoints[u];
-								yPoints[ptIndex] = r2.ypoints[u];
+								xPoints[ptIndex] = r2[u].x;
+								yPoints[ptIndex] = r2[u].y;
 								ptIndex++;
 							}
 							// extract the added points that have less than 8 neighbors -> new roi contour
@@ -4795,8 +5759,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 											}
 										}
 									}
-									float[] xUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
-									float[] yUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
+									int[] xUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
+									int[] yUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
 									int currentIndex=0;
 									for(int u = 0; u< xPoints.length; u++) {
 										if(pointsToRemoveIndexes[u]<1) {
@@ -4811,28 +5775,32 @@ public class Annotater<T extends RealType<T>> implements Command {
 									yPoints = yUpdatedPoints;
 								
 									// add nucleus to the list of nuclei
+									Point[] roiPoints = new Point[xPoints.length];
 									for(int u = 0; u< xPoints.length; u++) {
-										roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = firstObjectToMerge_class;
-										roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[firstObjectToMerge_class].size();
-										roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+										roiFlag[xPoints[u]][yPoints[u]][0] = firstObjectToMerge_class;
+										roiFlag[xPoints[u]][yPoints[u]][1] = (short)objectsInEachClass[firstObjectToMerge_class].size();
+										roiFlag[xPoints[u]][yPoints[u]][2] = (short)(overlay.size()-1);
+										roiPoints[u] = new Point(xPoints[u],yPoints[u]);
 									}
 									// define polygon and roi corresponding to the new region
-									FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+									//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 									// save new nucleus as roi in the corresponding class
-									objectsInEachClass[firstObjectToMerge_class].add(fPoly);
+									objectsInEachClass[firstObjectToMerge_class].add(roiPoints);
 								}
 							}
 							else {
 								// add nucleus to the list of nuclei
+								Point[] roiPoints = new Point[xPoints.length];
 								for(int u = 0; u< xPoints.length; u++) {
-									roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = firstObjectToMerge_class;
-									roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[firstObjectToMerge_class].size();
-									roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+									roiFlag[xPoints[u]][yPoints[u]][0] = firstObjectToMerge_class;
+									roiFlag[xPoints[u]][yPoints[u]][1] = (short)objectsInEachClass[firstObjectToMerge_class].size();
+									roiFlag[xPoints[u]][yPoints[u]][2] = (short)(overlay.size()-1);
+									roiPoints[u] = new Point(xPoints[u],yPoints[u]);
 								}
 								// define polygon and roi corresponding to the new region
-								FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+								//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 								// save new nucleus as roi in the corresponding class
-								objectsInEachClass[firstObjectToMerge_class].add(fPoly);
+								objectsInEachClass[firstObjectToMerge_class].add(roiPoints);
 							}
 
 							firstObjectToMerge_class = -1;
@@ -4890,7 +5858,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			IJ.showMessage("Split problem", "The line drawn to split a nucleus must split entirely one nucleus.");
 		}
 		else {
-			int nucleusClass = -1, nucleusClassId = -1, nucleusOverlayId = -1;
+			short nucleusClass = -1, nucleusClassId = -1, nucleusOverlayId = -1;
 			boolean uniqueNucleus=true;
 			for(int u=0;u<pts.length;u++) {
 				if(roiFlag[pts[u].x][pts[u].y][2]>(-1)) {
@@ -4915,16 +5883,17 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 				else {
 					// copy rois to merge
-					FloatPolygon rp = objectsInEachClass[nucleusClass].get(nucleusClassId);
+					//Polygon rp = objectsInEachClass[nucleusClass].get(nucleusClassId).getPolygon();
+					Point[] rp = objectsInEachClass[nucleusClass].get(nucleusClassId);
 			
 					// remove the object to split from objectsInEachClass and overlay, and then update
 					removeRoi(nucleusClass, nucleusClassId, nucleusOverlayId);
 					
 					int[][] nucleusImage = new int[displayImage.getDimensions()[0]][displayImage.getDimensions()[1]], originalNucleusImage = new int[displayImage.getDimensions()[0]][displayImage.getDimensions()[1]], flag = new int[displayImage.getDimensions()[0]][displayImage.getDimensions()[1]];;
-					for(int u=0;u<rp.npoints;u++) {
-						nucleusImage[(int)rp.xpoints[u]][(int)rp.ypoints[u]] = 1;
-						originalNucleusImage[(int)rp.xpoints[u]][(int)rp.ypoints[u]] = 1;
-						flag[(int)rp.xpoints[u]][(int)rp.ypoints[u]] = 0;
+					for(int u=0;u<rp.length;u++) {
+						nucleusImage[rp[u].x][rp[u].y] = 1;
+						originalNucleusImage[rp[u].x][rp[u].y] = 1;
+						flag[rp[u].x][rp[u].y] = 0;
 					}
 
 					for(int u=0;u<pts.length;u++) {
@@ -4934,10 +5903,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					
 					List<Point> r1 = new ArrayList<Point>();
-					neighbor2D((int)rp.xpoints[0], (int)rp.ypoints[0], nucleusImage, flag, r1, displayImage.getDimensions()[0], displayImage.getDimensions()[1]);
+					neighbor2D(rp[0].x, rp[0].y, nucleusImage, flag, r1, displayImage.getDimensions()[0], displayImage.getDimensions()[1]);
 					
-					float[] xPoints1 = new float[r1.size()];
-					float[] yPoints1 = new float[r1.size()];
+					int[] xPoints1 = new int[r1.size()];
+					int[] yPoints1 = new int[r1.size()];
 					for(int u=0;u<r1.size();u++) {
 						xPoints1[u] = r1.get(u).x;
 						yPoints1[u] = r1.get(u).y;
@@ -4959,8 +5928,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 									}
 								}
 							}
-							float[] xUpdatedPoints = new float[xPoints1.length-nbPointsToRemove1];
-							float[] yUpdatedPoints = new float[xPoints1.length-nbPointsToRemove1];
+							int[] xUpdatedPoints = new int[xPoints1.length-nbPointsToRemove1];
+							int[] yUpdatedPoints = new int[xPoints1.length-nbPointsToRemove1];
 							int currentIndex=0;
 							for(int u = 0; u< xPoints1.length; u++) {
 								if(pointsToRemoveIndexes[u]<1) {
@@ -4975,30 +5944,34 @@ public class Annotater<T extends RealType<T>> implements Command {
 							yPoints1 = yUpdatedPoints;
 						
 							// add nucleus to the list of nuclei
+							Point[] roiPoints = new Point[xPoints1.length];
 							for(int u = 0; u< xPoints1.length; u++) {
-								roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][0] = nucleusClass;
-								roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][1] = objectsInEachClass[nucleusClass].size();
-								roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][2] = overlay.size()-1;
-								originalNucleusImage[(int)xPoints1[u]][(int)yPoints1[u]] = overlay.size()-1;
+								roiFlag[xPoints1[u]][yPoints1[u]][0] = nucleusClass;
+								roiFlag[xPoints1[u]][yPoints1[u]][1] = (short)objectsInEachClass[nucleusClass].size();
+								roiFlag[xPoints1[u]][yPoints1[u]][2] = (short)(overlay.size()-1);
+								originalNucleusImage[xPoints1[u]][yPoints1[u]] = overlay.size()-1;
+								roiPoints[u] = new Point(xPoints1[u],yPoints1[u]);
 							}
 							// define polygon and roi corresponding to the new region
-							FloatPolygon fPoly = new FloatPolygon(xPoints1,yPoints1);
+							PolygonRoi fPoly = new PolygonRoi(xPoints1,yPoints1,xPoints1.length,Roi.FREEROI);
 							// save new nucleus as roi in the corresponding class
-							objectsInEachClass[nucleusClass].add(fPoly);
+							objectsInEachClass[nucleusClass].add(roiPoints);
 						}
 					}
 					else {
 						// add nucleus to the list of nuclei
+						Point[] roiPoints = new Point[xPoints1.length];
 						for(int u = 0; u< xPoints1.length; u++) {
-							roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][0] = nucleusClass;
-							roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][1] = objectsInEachClass[nucleusClass].size();
-							roiFlag[(int)xPoints1[u]][(int)yPoints1[u]][2] = overlay.size()-1;
-							originalNucleusImage[(int)xPoints1[u]][(int)yPoints1[u]] = overlay.size()-1;
+							roiFlag[xPoints1[u]][yPoints1[u]][0] = nucleusClass;
+							roiFlag[xPoints1[u]][yPoints1[u]][1] = (short)objectsInEachClass[nucleusClass].size();
+							roiFlag[xPoints1[u]][yPoints1[u]][2] = (short)(overlay.size()-1);
+							originalNucleusImage[xPoints1[u]][yPoints1[u]] = overlay.size()-1;
+							roiPoints[u] = new Point(xPoints1[u],yPoints1[u]);
 						}
 						// define polygon and roi corresponding to the new region
-						FloatPolygon fPoly = new FloatPolygon(xPoints1,yPoints1);
+						//PolygonRoi fPoly = new PolygonRoi(xPoints1,yPoints1,xPoints1.length,Roi.FREEROI);
 						// save new nucleus as roi in the corresponding class
-						objectsInEachClass[nucleusClass].add(fPoly);
+						objectsInEachClass[nucleusClass].add(roiPoints);
 					}
 					
 					// second object
@@ -5015,8 +5988,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 					List<Point> r2 = new ArrayList<Point>();
 					neighbor2D(firstPtInLineX, firstPtInLineY, nucleusImage, flag, r2, displayImage.getDimensions()[0], displayImage.getDimensions()[1]);
 
-					float[] xPoints2 = new float[r2.size()];
-					float[] yPoints2 = new float[r2.size()];
+					int[] xPoints2 = new int[r2.size()];
+					int[] yPoints2 = new int[r2.size()];
 					for(int u=0;u<r2.size();u++) {
 						xPoints2[u] = r2.get(u).x;
 						yPoints2[u] = r2.get(u).y;
@@ -5037,8 +6010,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 									}
 								}
 							}
-							float[] xUpdatedPoints = new float[xPoints2.length-nbPointsToRemove2];
-							float[] yUpdatedPoints = new float[xPoints2.length-nbPointsToRemove2];
+							int[] xUpdatedPoints = new int[xPoints2.length-nbPointsToRemove2];
+							int[] yUpdatedPoints = new int[xPoints2.length-nbPointsToRemove2];
 							int currentIndex=0;
 							for(int u = 0; u< xPoints2.length; u++) {
 								if(pointsToRemoveIndexes[u]<1) {
@@ -5053,28 +6026,32 @@ public class Annotater<T extends RealType<T>> implements Command {
 							yPoints2 = yUpdatedPoints;
 						
 							// add nucleus to the list of nuclei
+							Point[] roiPoints = new Point[xPoints2.length];
 							for(int u = 0; u< xPoints2.length; u++) {
-								roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][0] = nucleusClass;
-								roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][1] = objectsInEachClass[nucleusClass].size();
-								roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][2] = overlay.size()-1;
+								roiFlag[xPoints2[u]][yPoints2[u]][0] = nucleusClass;
+								roiFlag[xPoints2[u]][yPoints2[u]][1] = (short)objectsInEachClass[nucleusClass].size();
+								roiFlag[xPoints2[u]][yPoints2[u]][2] = (short)(overlay.size()-1);
+								roiPoints[u] = new Point(xPoints2[u],yPoints2[u]);
 							}
 							// define polygon and roi corresponding to the new region
-							FloatPolygon fPoly = new FloatPolygon(xPoints2,yPoints2);
+							//PolygonRoi fPoly = new PolygonRoi(xPoints2,yPoints2,xPoints2.length,Roi.FREEROI);
 							// save new nucleus as roi in the corresponding class
-							objectsInEachClass[nucleusClass].add(fPoly);
+							objectsInEachClass[nucleusClass].add(roiPoints);
 						}
 					}
 					else {
 						// add nucleus to the list of nuclei
+						Point[] roiPoints = new Point[xPoints2.length];
 						for(int u = 0; u< xPoints2.length; u++) {
-							roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][0] = nucleusClass;
-							roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][1] = objectsInEachClass[nucleusClass].size();
-							roiFlag[(int)xPoints2[u]][(int)yPoints2[u]][2] = overlay.size()-1;
+							roiFlag[xPoints2[u]][yPoints2[u]][0] = nucleusClass;
+							roiFlag[xPoints2[u]][yPoints2[u]][1] = (short)objectsInEachClass[nucleusClass].size();
+							roiFlag[xPoints2[u]][yPoints2[u]][2] = (short)(overlay.size()-1);
+							roiPoints[u] = new Point(xPoints2[u],yPoints2[u]);
 						}
 						// define polygon and roi corresponding to the new region
-						FloatPolygon fPoly = new FloatPolygon(xPoints2,yPoints2);
+						//PolygonRoi fPoly = new PolygonRoi(xPoints2,yPoints2,xPoints2.length,Roi.FREEROI);
 						// save new nucleus as roi in the corresponding class
-						objectsInEachClass[nucleusClass].add(fPoly);
+						objectsInEachClass[nucleusClass].add(roiPoints);
 					}
 					
 				}
@@ -5096,21 +6073,51 @@ public class Annotater<T extends RealType<T>> implements Command {
 		Point[] pts = r.getContainedPoints();
 		if(roiFlag[pts[0].x][pts[0].y][0]!=currentClass) {
 			int objectCurrentClass = roiFlag[pts[0].x][pts[0].y][0], objectClassId = roiFlag[pts[0].x][pts[0].y][1], objectOverlayId = roiFlag[pts[0].x][pts[0].y][2];
-			FloatPolygon fp = objectsInEachClass[objectCurrentClass].get(objectClassId);
+			//Polygon fp = objectsInEachClass[objectCurrentClass].get(objectClassId).getPolygon();
+			Point[] fp = objectsInEachClass[objectCurrentClass].get(objectClassId);
 			// duplicate object coordinates
-			float [] newRoiX = new float[fp.xpoints.length], newRoiY = new float[fp.xpoints.length];
-			for(int u = 0; u< fp.xpoints.length; u++) {
-				newRoiX[u] = fp.xpoints[u];
-				newRoiY[u] = fp.ypoints[u];
-				roiFlag[(int)newRoiX[u]][(int)newRoiY[u]][0] = currentClass;
-				roiFlag[(int)newRoiX[u]][(int)newRoiY[u]][1] = objectsInEachClass[currentClass].size();
-				roiFlag[(int)newRoiX[u]][(int)newRoiY[u]][2] = overlay.size();
+			int [] newRoiX = new int[fp.length], newRoiY = new int[fp.length];
+			Point[] roiPoints = new Point[fp.length];
+			for(int u = 0; u< fp.length; u++) {
+				newRoiX[u] = fp[u].x;
+				newRoiY[u] = fp[u].y;
+				roiFlag[newRoiX[u]][newRoiY[u]][0] = currentClass;
+				roiFlag[newRoiX[u]][newRoiY[u]][1] = (short)objectsInEachClass[currentClass].size();
+				roiFlag[newRoiX[u]][newRoiY[u]][2] = (short)overlay.size();
+				roiPoints[u] = new Point(newRoiX[u],newRoiY[u]);
 			}
 			removeRoi(objectCurrentClass, objectClassId, objectOverlayId);
-			FloatPolygon fPoly = new FloatPolygon(newRoiX,newRoiY);
+			//PolygonRoi fPoly = new PolygonRoi(newRoiX,newRoiY,newRoiX.length,Roi.FREEROI);
 			// save new nucleus as roi in the corresponding class
-			objectsInEachClass[currentClass].add(fPoly);
+			objectsInEachClass[currentClass].add(roiPoints);
 			drawNewObjectContour(newRoiX, newRoiY, currentClass);
+		}
+	}
+	/**
+	 * Swap object class
+	 */
+	private void swapObjectClass(Point[] objectToSwap, byte newClass)
+	{
+		if(roiFlag[objectToSwap[objectToSwap.length/2].x][objectToSwap[objectToSwap.length/2].y][0]!=newClass) {
+			int objectCurrentClass = roiFlag[objectToSwap[objectToSwap.length/2].x][objectToSwap[objectToSwap.length/2].y][0], 
+					objectClassId = roiFlag[objectToSwap[objectToSwap.length/2].x][objectToSwap[objectToSwap.length/2].y][1], 
+					objectOverlayId = roiFlag[objectToSwap[objectToSwap.length/2].x][objectToSwap[objectToSwap.length/2].y][2];
+			// duplicate object coordinates
+			int [] newRoiX = new int[objectToSwap.length], newRoiY = new int[objectToSwap.length];
+			Point[] roiPoints = new Point[objectToSwap.length];
+			for(int u = 0; u< objectToSwap.length; u++) {
+				newRoiX[u] = objectToSwap[u].x;
+				newRoiY[u] = objectToSwap[u].y;
+				roiFlag[newRoiX[u]][newRoiY[u]][0] = newClass;
+				roiFlag[newRoiX[u]][newRoiY[u]][1] = (short)objectsInEachClass[newClass].size();
+				roiFlag[newRoiX[u]][newRoiY[u]][2] = (short)overlay.size();
+				roiPoints[u] = new Point(newRoiX[u],newRoiY[u]);
+			}
+			removeRoi(objectCurrentClass, objectClassId, objectOverlayId);
+			//PolygonRoi fPoly = new PolygonRoi(newRoiX,newRoiY,newRoiX.length,Roi.FREEROI);
+			// save new nucleus as roi in the corresponding class
+			objectsInEachClass[newClass].add(roiPoints);
+			drawNewObjectContour(newRoiX, newRoiY, newClass);
 		}
 	}
 	/**
@@ -5118,33 +6125,38 @@ public class Annotater<T extends RealType<T>> implements Command {
 	 */
 	void activateNucleusMarker(Point pt)
 	{
-		markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[markerColors[currentMarker][currentPattern]]);
-		markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(2);
-		positiveNucleiForEachMarker[currentMarker][currentPattern].add(roiFlag[pt.x][pt.y][2]);
-		objectsForEachMarkerAndEachPattern[currentMarker][currentPattern].add(objectsInEachClass[roiFlag[pt.x][pt.y][0]].get(roiFlag[pt.x][pt.y][1]));
+		if((pt.x>(-1)) && (pt.y>(-1))){
+			if(roiFlag[pt.x][pt.y][2]>(-1)) {
+				markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[markerColors[currentMarker][currentPattern]]);
+				markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(2);
+				positiveNucleiForEachMarker[currentMarker][currentPattern].add(roiFlag[pt.x][pt.y][2]);
+			}
+		}
 	}
 	void deactivateNucleusMarker(Point pt)
 	{
-		if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeColor()==(colors[markerColors[currentMarker][currentPattern]])) {
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[classColors[roiFlag[pt.x][pt.y][0]]]);
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(0);
-			for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][currentPattern].size(); i++) {
-				if(positiveNucleiForEachMarker[currentMarker][currentPattern].get(i)==roiFlag[pt.x][pt.y][2]) {
-					positiveNucleiForEachMarker[currentMarker][currentPattern].remove(i);
-					objectsForEachMarkerAndEachPattern[currentMarker][currentPattern].remove(i);
-				}
-			}
-		}
-		else {
-			for(int k=0;k<4;k++) {
-				if(k!= currentPattern) {
-					for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][k].size(); i++) {
-						if(positiveNucleiForEachMarker[currentMarker][k].get(i)==roiFlag[pt.x][pt.y][2]) {
-							positiveNucleiForEachMarker[currentMarker][k].remove(i);
-							objectsForEachMarkerAndEachPattern[currentMarker][k].remove(i);
+		if((pt.x>(-1)) && (pt.y>(-1))){
+			if(roiFlag[pt.x][pt.y][2]>(-1)) {
+				if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeColor()==(colors[markerColors[currentMarker][currentPattern]])) {
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[classColors[roiFlag[pt.x][pt.y][0]]]);
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(0);
+					for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][currentPattern].size(); i++) {
+						if(positiveNucleiForEachMarker[currentMarker][currentPattern].get(i)==roiFlag[pt.x][pt.y][2]) {
+							positiveNucleiForEachMarker[currentMarker][currentPattern].remove(i);
 						}
 					}
-					activateNucleusMarker(pt);
+				}
+				else {
+					for(int k=0;k<4;k++) {
+						if(k!= currentPattern) {
+							for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][k].size(); i++) {
+								if(positiveNucleiForEachMarker[currentMarker][k].get(i)==roiFlag[pt.x][pt.y][2]) {
+									positiveNucleiForEachMarker[currentMarker][k].remove(i);
+								}
+							}
+							activateNucleusMarker(pt);
+						}
+					}
 				}
 			}
 		}
@@ -5175,22 +6187,28 @@ public class Annotater<T extends RealType<T>> implements Command {
 	 */
 	void activateNucleusMarkerThresholding(Point pt)
 	{
-		if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeWidth()==0) {
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[markerColors[currentMarker][currentPattern]]);
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(2);
-			positiveNucleiForEachMarker[currentMarker][currentPattern].add(roiFlag[pt.x][pt.y][2]);
-			objectsForEachMarkerAndEachPattern[currentMarker][currentPattern].add(objectsInEachClass[roiFlag[pt.x][pt.y][0]].get(roiFlag[pt.x][pt.y][1]));
+		if((pt.x>(-1)) && (pt.y>(-1))){
+			if(roiFlag[pt.x][pt.y][2]>(-1)) {
+				if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeWidth()==0) {
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[markerColors[currentMarker][currentPattern]]);
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(2);
+					positiveNucleiForEachMarker[currentMarker][currentPattern].add(roiFlag[pt.x][pt.y][2]);
+				}
+			}
 		}
 	}
 	void deactivateNucleusMarkerThresholding(Point pt)
 	{
-		if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeColor()==(colors[markerColors[currentMarker][currentPattern]])) {
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[classColors[roiFlag[pt.x][pt.y][0]]]);
-			markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(0);
-			for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][currentPattern].size(); i++) {
-				if(positiveNucleiForEachMarker[currentMarker][currentPattern].get(i)==roiFlag[pt.x][pt.y][2]) {
-					positiveNucleiForEachMarker[currentMarker][currentPattern].remove(i);
-					objectsForEachMarkerAndEachPattern[currentMarker][currentPattern].remove(i);
+		if((pt.x>(-1)) && (pt.y>(-1))){
+			if(roiFlag[pt.x][pt.y][2]>(-1)) {
+				if(markersOverlay.get(roiFlag[pt.x][pt.y][2]).getStrokeColor()==(colors[markerColors[currentMarker][currentPattern]])) {
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeColor(colors[classColors[roiFlag[pt.x][pt.y][0]]]);
+					markersOverlay.get(roiFlag[pt.x][pt.y][2]).setStrokeWidth(0);
+					for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][currentPattern].size(); i++) {
+						if(positiveNucleiForEachMarker[currentMarker][currentPattern].get(i)==roiFlag[pt.x][pt.y][2]) {
+							positiveNucleiForEachMarker[currentMarker][currentPattern].remove(i);
+						}
+					}
 				}
 			}
 		}
@@ -5206,8 +6224,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(firstObjectToMerge_class>-1) {
 					overlay.get(firstObjectToMerge_overlayId).setStrokeWidth(0);
 					firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
-					//overlay.remove(overlay.size()-1);
-					//markersOverlay.remove(markersOverlay.size()-1);
 					displayImage.updateAndDraw();
 				}
 			}
@@ -5223,8 +6239,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(firstObjectToMerge_class>-1) {
 					overlay.get(firstObjectToMerge_overlayId).setStrokeWidth(0);
 					firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
-					//overlay.remove(overlay.size()-1);
-					//markersOverlay.remove(markersOverlay.size()-1);
 					displayImage.updateAndDraw();
 				}
 			}
@@ -5248,8 +6262,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(firstObjectToMerge_class>-1) {
 					overlay.get(firstObjectToMerge_overlayId).setStrokeWidth(0);
 					firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
-					//overlay.remove(overlay.size()-1);
-					//markersOverlay.remove(markersOverlay.size()-1);
 					displayImage.updateAndDraw();
 				}
 			}
@@ -5265,8 +6277,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(firstObjectToMerge_class>-1) {
 					overlay.get(firstObjectToMerge_overlayId).setStrokeWidth(0);
 					firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
-					//overlay.remove(overlay.size()-1);
-					//markersOverlay.remove(markersOverlay.size()-1);
 					displayImage.updateAndDraw();
 				}
 			}
@@ -5308,7 +6318,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			if(firstObjectToMerge_class>-1) {
 				overlay.get(firstObjectToMerge_overlayId).setStrokeWidth(0);
 				firstObjectToMerge_class = -1;firstObjectToMerge_classId = -1;firstObjectToMerge_overlayId = -1;
-				//displayImage.updateAndDraw();
 			}
 		}
 		
@@ -5404,9 +6413,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5Button1.setSelected(false);
 		visualizeChannel6Button1.setSelected(false);
 		visualizeChannel7Button1.setSelected(false);
-		visualizeChannel8Button1.setSelected(false);
-		visualizeChannel9Button1.setSelected(false);
-		visualizeChannel10Button1.setSelected(false);
 		visualizeChannel1onlyButton1.setSelected(false);
 		visualizeChannel2onlyButton1.setSelected(false);
 		visualizeChannel3onlyButton1.setSelected(false);
@@ -5414,9 +6420,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton1.setSelected(false);
 		visualizeChannel6onlyButton1.setSelected(false);
 		visualizeChannel7onlyButton1.setSelected(false);
-		visualizeChannel8onlyButton1.setSelected(false);
-		visualizeChannel9onlyButton1.setSelected(false);
-		visualizeChannel10onlyButton1.setSelected(false);
 		visualizeAllChannelsButton1.setSelected(false);
 	}
 	void initializeVisualizeChannelButtons1compositeMode() {
@@ -5427,9 +6430,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton1.setSelected(false);
 		visualizeChannel6onlyButton1.setSelected(false);
 		visualizeChannel7onlyButton1.setSelected(false);
-		visualizeChannel8onlyButton1.setSelected(false);
-		visualizeChannel9onlyButton1.setSelected(false);
-		visualizeChannel10onlyButton1.setSelected(false);
 		visualizeAllChannelsButton1.setSelected(false);
 	}
 	String getChannelsForCompositeImage1() {
@@ -5455,18 +6455,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 		else if(numOfChannels==7) {
 			chs = Integer.toString(visualizeChannel1Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button1.isSelected() ? 1 : 0);
 		}
-		else if(numOfChannels==8) {
-			chs = Integer.toString(visualizeChannel1Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button1.isSelected() ? 1 : 0);
-		}
-		else if(numOfChannels==9) {
-			chs = Integer.toString(visualizeChannel1Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel9Button1.isSelected() ? 1 : 0);
-		}
-		else if(numOfChannels==10) {
-			chs = Integer.toString(visualizeChannel1Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel9Button1.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel10Button1.isSelected() ? 1 : 0);
-		}
 		return chs;
 	}
-	void updateVisualizeChannelButtons1(int pressedButton)
+	void updateVisualizeChannelButtons1(byte pressedButton)
 	{
 		if(pressedButton<10) {
 			if(displayFlag==0) {
@@ -5505,18 +6496,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			initializeVisualizeChannelButtons1();
 			visualizeChannel7onlyButton1.setSelected(true);
 		}
-		else if(pressedButton==17) {
-			initializeVisualizeChannelButtons1();
-			visualizeChannel8onlyButton1.setSelected(true);
-		}
-		else if(pressedButton==18) {
-			initializeVisualizeChannelButtons1();
-			visualizeChannel9onlyButton1.setSelected(true);
-		}
-		else if(pressedButton==19) {
-			initializeVisualizeChannelButtons1();
-			visualizeChannel10onlyButton1.setSelected(true);
-		}
 		else if(pressedButton==20) {
 			initializeVisualizeChannelButtons1();
 			visualizeAllChannelsButton1.setSelected(true);
@@ -5549,9 +6528,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5Button2.setSelected(false);
 		visualizeChannel6Button2.setSelected(false);
 		visualizeChannel7Button2.setSelected(false);
-		visualizeChannel8Button2.setSelected(false);
-		visualizeChannel9Button2.setSelected(false);
-		visualizeChannel10Button2.setSelected(false);
 		visualizeChannel1onlyButton2.setSelected(false);
 		visualizeChannel2onlyButton2.setSelected(false);
 		visualizeChannel3onlyButton2.setSelected(false);
@@ -5559,9 +6535,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton2.setSelected(false);
 		visualizeChannel6onlyButton2.setSelected(false);
 		visualizeChannel7onlyButton2.setSelected(false);
-		visualizeChannel8onlyButton2.setSelected(false);
-		visualizeChannel9onlyButton2.setSelected(false);
-		visualizeChannel10onlyButton2.setSelected(false);
 		visualizeAllChannelsButton2.setSelected(false);
 	}
 	void initializeVisualizeChannelButtons2compositeMode() {
@@ -5572,9 +6545,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		visualizeChannel5onlyButton2.setSelected(false);
 		visualizeChannel6onlyButton2.setSelected(false);
 		visualizeChannel7onlyButton2.setSelected(false);
-		visualizeChannel8onlyButton2.setSelected(false);
-		visualizeChannel9onlyButton2.setSelected(false);
-		visualizeChannel10onlyButton2.setSelected(false);
 		visualizeAllChannelsButton2.setSelected(false);
 	}
 	String getChannelsForCompositeImage2() {
@@ -5600,18 +6570,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 		else if(numOfChannels==7) {
 			chs = Integer.toString(visualizeChannel1Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button2.isSelected() ? 1 : 0);
 		}
-		else if(numOfChannels==8) {
-			chs = Integer.toString(visualizeChannel1Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button2.isSelected() ? 1 : 0);
-		}
-		else if(numOfChannels==9) {
-			chs = Integer.toString(visualizeChannel1Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel9Button2.isSelected() ? 1 : 0);
-		}
-		else if(numOfChannels==10) {
-			chs = Integer.toString(visualizeChannel1Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel2Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel3Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel4Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel5Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel6Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel7Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel8Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel9Button2.isSelected() ? 1 : 0) + Integer.toString(visualizeChannel10Button2.isSelected() ? 1 : 0);
-		}
 		return chs;
 	}
-	void updateVisualizeChannelButtons2(int pressedButton)
+	void updateVisualizeChannelButtons2(byte pressedButton)
 	{
 		if(pressedButton<10) {
 			if(displayFlag==0) {
@@ -5649,18 +6610,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		else if(pressedButton==16) {
 			initializeVisualizeChannelButtons2();
 			visualizeChannel7onlyButton2.setSelected(true);
-		}
-		else if(pressedButton==17) {
-			initializeVisualizeChannelButtons2();
-			visualizeChannel8onlyButton2.setSelected(true);
-		}
-		else if(pressedButton==18) {
-			initializeVisualizeChannelButtons2();
-			visualizeChannel9onlyButton2.setSelected(true);
-		}
-		else if(pressedButton==19) {
-			initializeVisualizeChannelButtons2();
-			visualizeChannel10onlyButton2.setSelected(true);
 		}
 		else if(pressedButton==20) {
 			initializeVisualizeChannelButtons2();
@@ -5726,36 +6675,31 @@ public class Annotater<T extends RealType<T>> implements Command {
 		marker7Pattern2Button.setSelected(false);
 		marker7Pattern3Button.setSelected(false);
 		marker7Pattern4Button.setSelected(false);
-		marker8Button.setSelected(false);
-		marker8Pattern1Button.setSelected(false);
-		marker8Pattern2Button.setSelected(false);
-		marker8Pattern3Button.setSelected(false);
-		marker8Pattern4Button.setSelected(false);
-		marker9Button.setSelected(false);
-		marker9Pattern1Button.setSelected(false);
-		marker9Pattern2Button.setSelected(false);
-		marker9Pattern3Button.setSelected(false);
-		marker9Pattern4Button.setSelected(false);
-		marker10Button.setSelected(false);
-		marker10Pattern1Button.setSelected(false);
-		marker10Pattern2Button.setSelected(false);
-		marker10Pattern3Button.setSelected(false);
-		marker10Pattern4Button.setSelected(false);
 	}
 	void removeCurrentNucleiMarkerOverlays() {
 		for(int p=0;p<4;p++) {
 			for(int i = 0; i < positiveNucleiForEachMarker[currentMarker][p].size(); i++) {
 				Point[] pts = overlay.get(positiveNucleiForEachMarker[currentMarker][p].get(i)).getContainedPoints();
 				int currentX=-1,currentY=-1;
-				for(int k = 0; k < pts.length; k++) {
-					if(roiFlag[pts[k].x][pts[k].y][2]>(-1)) {
-						currentX = pts[k].x;
-						currentY = pts[k].y;
+				if(roiFlag[pts[pts.length/2].x][pts[pts.length/2].y][2]>(-1)) {
+					currentX = pts[pts.length/2].x;
+					currentY = pts[pts.length/2].y;
+				}
+				else {
+					for(int k = 0; k < pts.length; k++) {
+						if(roiFlag[pts[k].x][pts[k].y][2]>(-1)) {
+							currentX = pts[k].x;
+							currentY = pts[k].y;
+						}
 					}
 				}
-				if(roiFlag[currentX][currentY][2]>(-1)) {
-					markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeColor(colors[classColors[roiFlag[currentX][currentY][0]]]);
-					markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeWidth(0);
+				if(currentX>(-1)) {
+					if(roiFlag[currentX][currentY][2]>(-1)) {
+						if(roiFlag[currentX][pts[pts.length/2].y][2]>(-1)) {
+							markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeColor(colors[classColors[roiFlag[currentX][currentY][0]]]);
+							markersOverlay.get(roiFlag[currentX][currentY][2]).setStrokeWidth(0);
+						}
+					}
 				}
 			}
 		}
@@ -5859,39 +6803,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				activateCurrentNucleiMarkerOverlays(6);
 			}
 		}
-		else if(pressedButton==7) {
-			initializeMarkerButtons();
-			marker8Button.setSelected(true);
-			marker8Pattern1Button.setSelected(true);
-			if(currentMarker!=7) {
-				if(currentMarker>(-1)) {removeCurrentNucleiMarkerOverlays();}
-				currentMarker = pressedButton;
-				currentPattern = 0;
-				activateCurrentNucleiMarkerOverlays(7);
-			}
-		}
-		else if(pressedButton==8) {
-			initializeMarkerButtons();
-			marker9Button.setSelected(true);
-			marker9Pattern1Button.setSelected(true);
-			if(currentMarker!=8) {
-				if(currentMarker>(-1)) {removeCurrentNucleiMarkerOverlays();}
-				currentMarker = pressedButton;
-				currentPattern = 0;
-				activateCurrentNucleiMarkerOverlays(8);
-			}
-		}
-		else if(pressedButton==9) {
-			initializeMarkerButtons();
-			marker10Button.setSelected(true);
-			marker10Pattern1Button.setSelected(true);
-			if(currentMarker!=9) {
-				if(currentMarker>(-1)) {removeCurrentNucleiMarkerOverlays();}
-				currentMarker = pressedButton;
-				currentPattern = 0;
-				activateCurrentNucleiMarkerOverlays(9);
-			}
-		}
+		displayImage.updateAndDraw();
 		/*if(visualizeAllChannelsButton2.isSelected()) {
 			visualizeAllChannelsButton2.setSelected(false);
 		}
@@ -6076,78 +6988,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					marker7Pattern4Button.setSelected(true);
 					currentPattern = 3;
 				}
-				else if(pressedButton==28) {
-					initializeMarkerButtons();
-					marker8Button.setSelected(true);
-					marker8Pattern1Button.setSelected(true);
-					currentPattern = 0;
-				}
-				else if(pressedButton==29) {
-					initializeMarkerButtons();
-					marker8Button.setSelected(true);
-					marker8Pattern2Button.setSelected(true);
-					currentPattern = 1;
-				}
-				else if(pressedButton==30) {
-					initializeMarkerButtons();
-					marker8Button.setSelected(true);
-					marker8Pattern3Button.setSelected(true);
-					currentPattern = 2;
-				}
-				else if(pressedButton==31) {
-					initializeMarkerButtons();
-					marker8Button.setSelected(true);
-					marker8Pattern4Button.setSelected(true);
-					currentPattern = 3;
-				}
-				else if(pressedButton==32) {
-					initializeMarkerButtons();
-					marker9Button.setSelected(true);
-					marker9Pattern1Button.setSelected(true);
-					currentPattern = 0;
-				}
-				else if(pressedButton==33) {
-					initializeMarkerButtons();
-					marker9Button.setSelected(true);
-					marker9Pattern2Button.setSelected(true);
-					currentPattern = 1;
-				}
-				else if(pressedButton==34) {
-					initializeMarkerButtons();
-					marker9Button.setSelected(true);
-					marker9Pattern3Button.setSelected(true);
-					currentPattern = 2;
-				}
-				else if(pressedButton==35) {
-					initializeMarkerButtons();
-					marker9Button.setSelected(true);
-					marker9Pattern4Button.setSelected(true);
-					currentPattern = 3;
-				}
-				else if(pressedButton==36) {
-					initializeMarkerButtons();
-					marker10Button.setSelected(true);
-					marker10Pattern1Button.setSelected(true);
-					currentPattern = 0;
-				}
-				else if(pressedButton==37) {
-					initializeMarkerButtons();
-					marker10Button.setSelected(true);
-					marker10Pattern2Button.setSelected(true);
-					currentPattern = 1;
-				}
-				else if(pressedButton==38) {
-					initializeMarkerButtons();
-					marker10Button.setSelected(true);
-					marker10Pattern3Button.setSelected(true);
-					currentPattern = 2;
-				}
-				else if(pressedButton==39) {
-					initializeMarkerButtons();
-					marker10Button.setSelected(true);
-					marker10Pattern4Button.setSelected(true);
-					currentPattern = 3;
-				}
 			}
 			else {
 				initializeMarkerButtons();
@@ -6256,51 +7096,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 						marker7Pattern4Button.setSelected(true);
 					}
 				}
-				if(currentMarker==7) {
-					marker8Button.setSelected(true);
-					if(currentPattern==0) {
-						marker8Pattern1Button.setSelected(true);
-					}
-					else if(currentPattern==1) {
-						marker8Pattern2Button.setSelected(true);
-					}
-					else if(currentPattern==2) {
-						marker8Pattern3Button.setSelected(true);
-					}
-					else if(currentPattern==3) {
-						marker8Pattern4Button.setSelected(true);
-					}
-				}
-				if(currentMarker==8) {
-					marker9Button.setSelected(true);
-					if(currentPattern==0) {
-						marker9Pattern1Button.setSelected(true);
-					}
-					else if(currentPattern==1) {
-						marker9Pattern2Button.setSelected(true);
-					}
-					else if(currentPattern==2) {
-						marker9Pattern3Button.setSelected(true);
-					}
-					else if(currentPattern==3) {
-						marker9Pattern4Button.setSelected(true);
-					}
-				}
-				if(currentMarker==9) {
-					marker10Button.setSelected(true);
-					if(currentPattern==0) {
-						marker10Pattern1Button.setSelected(true);
-					}
-					else if(currentPattern==1) {
-						marker10Pattern2Button.setSelected(true);
-					}
-					else if(currentPattern==2) {
-						marker10Pattern3Button.setSelected(true);
-					}
-					else if(currentPattern==3) {
-						marker10Pattern4Button.setSelected(true);
-					}
-				}
 			}
 		}
 		else {
@@ -6321,8 +7116,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 			int progressIndex=0, totalNbObjectsToRemove=objectsInEachClass[classToRemove].size();
 			while(objectsInEachClass[classToRemove].size()>0) {
 				IJ.showProgress(progressIndex, totalNbObjectsToRemove);
-				int xC = (int)objectsInEachClass[classToRemove].get(0).xpoints[objectsInEachClass[classToRemove].get(0).xpoints.length/2],
-						yC = (int)objectsInEachClass[classToRemove].get(0).ypoints[objectsInEachClass[classToRemove].get(0).xpoints.length/2];
+				//Polygon pl = objectsInEachClass[classToRemove].get(0).getPolygon();
+				Point[] pl = objectsInEachClass[classToRemove].get(0);
+				int xC = pl[pl.length/2].x, yC = pl[pl.length/2].y;
 				int roiIdToRemove = roiFlag[xC][yC][1], overlayIdToRemove = roiFlag[xC][yC][2];
 				removeRoi(classToRemove, roiIdToRemove, overlayIdToRemove);
 				progressIndex++;
@@ -6336,8 +7132,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 				for(int i=classToRemove;i<numOfClasses;i++) {
 					for(int j=0;j<objectsInEachClass[i+1].size();j++) {
 						objectsInEachClass[i].add(objectsInEachClass[i+1].get(j));
-						for(int k=0;k<objectsInEachClass[i].get(j).npoints;k++) {
-							roiFlag[(int)objectsInEachClass[i].get(j).xpoints[k]][(int)objectsInEachClass[i].get(j).ypoints[k]][0]--;
+						//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+						Point[] pl = objectsInEachClass[i].get(j);
+						for(int k=0;k<pl.length;k++) {
+							roiFlag[pl[k].x][pl[k].y][0]--;
 						}
 					}
 					classColors[i] = classColors[i+1];
@@ -6386,7 +7184,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			else {
 				// reinitializa class 1
 				objectsInEachClass[0] = null;
-				objectsInEachClass[0] = new ArrayList<FloatPolygon>();
+				objectsInEachClass[0] = new ArrayList<Point[]>();
 			}
 
 			// display update
@@ -6899,18 +7697,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 	/**
 	 * Add new marker in the panel
 	 */
-	private void addNewMarker() 
+	private boolean addNewMarker() 
 	{
 		if(numOfMarkers == MAX_NUM_MARKERS)
 		{
 			IJ.showMessage("Maximum number of markers", "Sorry, maximum number of markers has been reached");
-			return;
+			return false;
 		}
 
 		// Add new class label and list
 		win.addMarker();
 		
 		repaintWindow();
+		
+		return true;
 
 	}
 	/**
@@ -6923,10 +7723,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 		for(int p=0;p<4;p++) {
 			while(positiveNucleiForEachMarker[markerToRemove][p].size()>0) {
 				positiveNucleiForEachMarker[markerToRemove][p].remove(0);
-				objectsForEachMarkerAndEachPattern[markerToRemove][p].remove(0);
 			}
 		}
-		
 		// update number of markers
 		numOfMarkers--;
 		
@@ -6937,17 +7735,16 @@ public class Annotater<T extends RealType<T>> implements Command {
 				for(int j=0;j<positiveNucleiForEachMarker[i+1][p].size();j++) {
 					positiveNucleiForEachMarker[i][p].add(positiveNucleiForEachMarker[i+1][p].get(j));
 				}
-				for(int j=0;j<objectsForEachMarkerAndEachPattern[i+1][p].size();j++) {
-					objectsForEachMarkerAndEachPattern[i][p].add(objectsForEachMarkerAndEachPattern[i+1][p].get(j));
-				}
 				markerColors[i][p] = markerColors[i+1][p];
 				markerCellcompartment[i] = markerCellcompartment[i+1];
+				channelForMarker[i] = channelForMarker[i+1];
+				thresholdForMarker[i][0] = thresholdForMarker[i+1][0];
+				thresholdForMarker[i][1] = thresholdForMarker[i+1][1];
 			}
 			// delete marker i+1
 			for(int p=0;p<4;p++) {
 				while(positiveNucleiForEachMarker[i+1][p].size()>0) {
 					positiveNucleiForEachMarker[i+1][p].remove(0);
-					objectsForEachMarkerAndEachPattern[i+1][p].remove(0);
 				}
 			}
 		}
@@ -6975,24 +7772,18 @@ public class Annotater<T extends RealType<T>> implements Command {
 		case 6:
 			removeMarker7ButtonFromListener();
 			break;
-		case 7:
-			removeMarker8ButtonFromListener();
-			break;
-		case 8:
-			removeMarker9ButtonFromListener();
-			break;
-		case 9:
-			removeMarker10ButtonFromListener();
-			break;
 		default:
 			break;
 		}
 		
 		// update marker associated parameters
-		for(int p=0;p<4;p++) {
-			markerColors[numOfMarkers][p] = p+4;
+		for(byte p=0;p<4;p++) {
+			markerColors[numOfMarkers][p] = (byte)(p+4);
 		}
 		markerCellcompartment[numOfMarkers] = 0;
+		channelForMarker[numOfMarkers] = -1;
+		thresholdForMarker[numOfMarkers][0] = -1;
+		thresholdForMarker[numOfMarkers][1] = -1;
 		currentMarker = -1;
 		currentPattern = -1;
 		
@@ -7035,8 +7826,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			RoiManager rm = new RoiManager();
 			for(int i=0;i<numOfClasses;i++) {
 				for(int j=0;j<objectsInEachClass[i].size();j++) {
-					PolygonRoi pr = new PolygonRoi(objectsInEachClass[i].get(j).xpoints,objectsInEachClass[i].get(j).ypoints,Roi.FREEROI);
-					rm.addRoi(pr);
+					Point[] currentNucleus = objectsInEachClass[i].get(j);
+					int[] xPts = new int[currentNucleus.length], yPts = new int[currentNucleus.length];
+					for(int p=0;p<xPts.length;p++) {
+						xPts[p] = currentNucleus[p].x;
+						yPts[p] = currentNucleus[p].y;
+					}
+					PointRoi pr = new PointRoi(xPts, yPts, xPts.length);
+					ShapeRoi sr = new ShapeRoi(pr);
+					rm.addRoi(sr);
 				}
 			}
 			
@@ -7080,12 +7878,255 @@ public class Annotater<T extends RealType<T>> implements Command {
 						}
 					}
 					finalRt.addValue("Class", i+1);
-					int overlayId = roiFlag[(int)objectsInEachClass[i].get(j).xpoints[objectsInEachClass[i].get(j).xpoints.length/2]][(int)objectsInEachClass[i].get(j).ypoints[objectsInEachClass[i].get(j).xpoints.length/2]][2];
+					//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+					Point[] pl = objectsInEachClass[i].get(j);
+					int overlayId = roiFlag[pl[pl.length/2].x][pl[pl.length/2].y][2];
 				}
 			}
 			finalRt.show("Results");
 		}
 	}
+	private void classMeasurements(String outputPath) 
+	{
+		if(objectsInEachClass[0].size()==0) {
+			IJ.showMessage("No object", "There are no annotated objects");
+		}
+		else {
+			RoiManager rm = new RoiManager();
+			for(int i=0;i<numOfClasses;i++) {
+				for(int j=0;j<objectsInEachClass[i].size();j++) {
+					Point[] currentNucleus = objectsInEachClass[i].get(j);
+					int[] xPts = new int[currentNucleus.length], yPts = new int[currentNucleus.length];
+					for(int p=0;p<xPts.length;p++) {
+						xPts[p] = currentNucleus[p].x;
+						yPts[p] = currentNucleus[p].y;
+					}
+					PointRoi pr = new PointRoi(xPts, yPts, xPts.length);
+					ShapeRoi sr = new ShapeRoi(pr);
+					rm.addRoi(sr);
+				}
+			}
+			
+			int nbObjects=0;
+			for(int i=0;i<numOfClasses;i++) {
+				nbObjects += objectsInEachClass[i].size();
+			}
+			ResultsTable rt = rm.multiMeasure(displayImage);
+			rm.close();
+			
+			int nbCols=0;
+			for  (int cnt=0;cnt<10000000; cnt++) {
+				if (rt.columnExists(cnt)){
+					nbCols++;
+				}
+			}
+			int nbFeatures = nbCols/nbObjects;
+			int[] intensityFeatures = new int[nbFeatures];
+			for(int k=0;k<nbFeatures;k++) {
+				double value1 = rt.getValueAsDouble(k, 0), value2 = rt.getValueAsDouble(k, 1);
+				if(value2!=value1) {
+					intensityFeatures[k] = 1;
+				}
+			}
+
+			final ResultsTable finalRt = new ResultsTable();
+			int rtIndex=0;
+			for(int i=0;i<numOfClasses;i++) {
+				for(int j=0;j<objectsInEachClass[i].size();j++) {
+					finalRt.incrementCounter();
+					for(int k=0;k<nbFeatures;k++) {
+						if(intensityFeatures[k]==0) {
+							finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1), rt.getValueAsDouble(rtIndex, 0));
+							rtIndex++;
+						}
+						else {
+							for(int c=0;c<numOfChannels;c++) {
+								finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1)+"Ch"+(c+1), rt.getValueAsDouble(rtIndex, c));
+							}
+							rtIndex++;
+						}
+					}
+					finalRt.addValue("Class", i+1);
+					//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+					Point[] pl = objectsInEachClass[i].get(j);
+					int overlayId = roiFlag[pl[pl.length/2].x][pl[pl.length/2].y][2];
+				}
+			}
+			finalRt.save(outputPath);
+		}
+	}
+	/**
+	 * Summarize info for one single nucleus
+	 */
+	private void classMeasurementsForOneNucleus() 
+	{
+		//get selected region
+		Roi r = displayImage.getRoi();
+		if (null == r){
+			return;
+		}
+		displayImage.killRoi();
+			
+		Point[] pts = r.getContainedPoints();
+		if(roiFlag[pts[0].x][pts[0].y][0]>(-1)) {
+			RoiManager rm = new RoiManager();
+			Point[] nucleusToMeasure = objectsInEachClass[roiFlag[pts[0].x][pts[0].y][0]].get(roiFlag[pts[0].x][pts[0].y][1]);
+			int[] xPts = new int[nucleusToMeasure.length], yPts = new int[nucleusToMeasure.length];
+			for(int p=0;p<xPts.length;p++) {
+				xPts[p] = nucleusToMeasure[p].x;
+				yPts[p] = nucleusToMeasure[p].y;
+			}
+			PointRoi pr = new PointRoi(xPts, yPts, xPts.length);
+			ShapeRoi sr = new ShapeRoi(pr);
+			overlay.add(sr);
+			rm.addRoi(sr);
+			ResultsTable rt = rm.multiMeasure(displayImage);
+			rm.close();
+			
+			int nbCols=0;
+			for  (int cnt=0;cnt<10000000; cnt++) {
+				if (rt.columnExists(cnt)){
+					nbCols++;
+				}
+			}
+			int nbFeatures = nbCols;
+			int[] intensityFeatures = new int[nbFeatures];
+			for(int k=0;k<nbFeatures;k++) {
+				double value1 = rt.getValueAsDouble(k, 0), value2 = rt.getValueAsDouble(k, 1);
+				if(value2!=value1) {
+					intensityFeatures[k] = 1;
+				}
+			}
+
+			final ResultsTable finalRt = new ResultsTable();
+			finalRt.incrementCounter();
+			int rtIndex=0;
+			for(int k=0;k<nbFeatures;k++) {
+				if(intensityFeatures[k]==0) {
+					finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1), rt.getValueAsDouble(rtIndex, 0));
+					rtIndex++;
+				}
+				else {
+					for(int c=0;c<numOfChannels;c++) {
+						finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1)+"Ch"+(c+1), rt.getValueAsDouble(rtIndex, c));
+					}
+					rtIndex++;
+				}
+			}
+			finalRt.addValue("Class", 1);
+			IJ.log("Size: " + xPts.length);
+			finalRt.show("Results");
+			
+			ImageProcessor mask = sr!=null?sr.getMask():null;
+			ImagePlus currentImage = new ImagePlus("Roi", mask) ;
+			currentImage.show();
+			
+		}
+	}
+	/** ask user to define parameters for nuclei filtering */ 
+	private boolean addFilterWindow()
+	{
+		/** buttons for marker characterization */
+		JTextArea minNbPixelsPerNucleusQuestion = new JTextArea("What is the minimum number of pixels per nucleus?");
+		minNbPixelsPerNucleusQuestion.setEditable(false);
+		JTextField minNbPixelsPerNucleusTextField = new JTextField();
+		minNbPixelsPerNucleusTextField.setText("" + 50);
+		JTextArea minMinorOverMajorRatioQuestion = new JTextArea("What is the minimum accepted ratio between the minor and major axis of an ellipse fitting the nucleus?");
+		minMinorOverMajorRatioQuestion.setEditable(false);
+		JTextField minMinorOverMajorRatioTextField = new JTextField();
+		minMinorOverMajorRatioTextField.setText("" + 0.5);
+		
+		JPanel filteringPanel = new JPanel();
+		filteringPanel.setBorder(BorderFactory.createTitledBorder(""));
+		GridBagLayout filteringPanelLayout = new GridBagLayout();
+		GridBagConstraints filteringPanelConstraints = new GridBagConstraints();
+		filteringPanelConstraints.anchor = GridBagConstraints.NORTHWEST;
+		filteringPanelConstraints.fill = GridBagConstraints.HORIZONTAL;
+		filteringPanelConstraints.gridwidth = 1;
+		filteringPanelConstraints.gridheight = 1;
+		filteringPanelConstraints.gridx = 0;
+		filteringPanelConstraints.gridy = 0;
+		filteringPanel.setLayout(filteringPanelLayout);
+		
+		filteringPanel.add(minNbPixelsPerNucleusQuestion,filteringPanelConstraints);
+		filteringPanelConstraints.gridy++;
+		minNbPixelsPerNucleusTextField.setPreferredSize( new Dimension( 50, 24 ) );
+		filteringPanel.add(minNbPixelsPerNucleusTextField,filteringPanelConstraints);
+		filteringPanelConstraints.gridy++;
+		filteringPanel.add(minMinorOverMajorRatioQuestion,filteringPanelConstraints);
+		filteringPanelConstraints.gridy++;
+		minMinorOverMajorRatioTextField.setPreferredSize( new Dimension( 50, 24 ) );
+		filteringPanel.add(minMinorOverMajorRatioTextField,filteringPanelConstraints);
+		
+		
+		GenericDialogPlus gd = new GenericDialogPlus("Nuclei filtering");
+		gd.addComponent(filteringPanel);
+		gd.showDialog();
+
+		if (gd.wasCanceled())
+			return false;
+		
+		// update cell compartment marker status
+		int minNbPixelsPerNucleus = Integer.valueOf(minNbPixelsPerNucleusTextField.getText());
+		double minMinorOverMajorRatio = Double.valueOf(minMinorOverMajorRatioTextField.getText());
+		filterNuclei(minNbPixelsPerNucleus, minMinorOverMajorRatio);
+		
+		return true;
+	}
+	/**
+	 * Filter nuclei based on nuclei features
+	 */
+	private void filterNuclei(int minNbPixelsPerNucleus, double minMinorOverMajorRatio) 
+	{
+		// size filtering
+		int totalNbObjects = 0, globalCurrentIndex = 0;
+		for(int i=0;i<numOfClasses;i++) {
+			totalNbObjects += objectsInEachClass[i].size();
+		}
+		byte newClass = numOfClasses;
+		for(int i=0;i<numOfClasses;i++) {
+			for(int j=0;j<objectsInEachClass[i].size();j++) {
+				IJ.showProgress(globalCurrentIndex, totalNbObjects);
+				//Polygon currentRoi = objectsInEachClass[i].get(j).getPolygon();
+				Point[] currentRoi = objectsInEachClass[i].get(j);
+				if(currentRoi.length<minNbPixelsPerNucleus) {
+					if(newClass>=numOfClasses) {addNewClass();}
+					swapObjectClass(currentRoi, newClass);
+				}
+				globalCurrentIndex++;
+			}
+		}
+		newClass = numOfClasses;
+		// shape filtering
+		globalCurrentIndex = 0;
+		for(int i=0;i<numOfClasses;i++) {
+			for(int j=0;j<objectsInEachClass[i].size();j++) {
+				IJ.showProgress(globalCurrentIndex, totalNbObjects);
+				Point[] currentNucleus = objectsInEachClass[i].get(j);
+				int[] xPts = new int[currentNucleus.length], yPts = new int[currentNucleus.length];
+				for(int p=0;p<xPts.length;p++) {
+					xPts[p] = currentNucleus[p].x;
+					yPts[p] = currentNucleus[p].y;
+				}
+				PolygonRoi pr = new PolygonRoi(xPts, yPts, xPts.length, Roi.FREEROI);
+				if(pr.getFloatWidth()<pr.getFloatHeight()) {
+					if((pr.getFloatWidth()/pr.getFloatHeight())<minMinorOverMajorRatio) {
+						if(newClass>=numOfClasses) {addNewClass();}
+						swapObjectClass(currentNucleus, newClass);
+					}
+				}
+				else {
+					if((pr.getFloatHeight()/pr.getFloatWidth())<minMinorOverMajorRatio) {
+						if(newClass>=numOfClasses) {addNewClass();}
+						swapObjectClass(currentNucleus, newClass);
+					}
+				}
+				globalCurrentIndex++;
+			}
+		}
+		displayImage.updateAndDraw();
+	}
+
 	
 	/**
 	 * Summarize all info
@@ -7099,8 +8140,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			RoiManager rm = new RoiManager();
 			for(int i=0;i<numOfClasses;i++) {
 				for(int j=0;j<objectsInEachClass[i].size();j++) {
-					PolygonRoi pr = new PolygonRoi(objectsInEachClass[i].get(j).xpoints,objectsInEachClass[i].get(j).ypoints,Roi.FREEROI);
-					rm.addRoi(pr);
+					Point[] currentNucleus = objectsInEachClass[i].get(j);
+					int[] xPts = new int[currentNucleus.length], yPts = new int[currentNucleus.length];
+					for(int p=0;p<xPts.length;p++) {
+						xPts[p] = currentNucleus[p].x;
+						yPts[p] = currentNucleus[p].y;
+					}
+					PointRoi pr = new PointRoi(xPts, yPts, xPts.length);
+					ShapeRoi sr = new ShapeRoi(pr);
+					rm.addRoi(sr);
 				}
 			}
 			
@@ -7143,7 +8191,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 						}
 					}
 					finalRt.addValue("Class", i+1);
-					int overlayId = roiFlag[(int)objectsInEachClass[i].get(j).xpoints[objectsInEachClass[i].get(j).xpoints.length/2]][(int)objectsInEachClass[i].get(j).ypoints[objectsInEachClass[i].get(j).xpoints.length/2]][2];
+					//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+					Point[] pl = objectsInEachClass[i].get(j);
+					int overlayId = roiFlag[pl[pl.length/2].x][pl[pl.length/2].y][2];
 
 					for(int k=0;k<numOfMarkers;k++) {
 						int pattern = 0;
@@ -7159,6 +8209,86 @@ public class Annotater<T extends RealType<T>> implements Command {
 				}
 			}
 			finalRt.show("Results");
+		}
+	}
+	private void markerMeasurements(String outputPath) 
+	{
+		if(objectsInEachClass[0].size()==0) {
+			IJ.showMessage("No object", "There are no annotated objects");
+		}
+		else {
+			RoiManager rm = new RoiManager();
+			for(int i=0;i<numOfClasses;i++) {
+				for(int j=0;j<objectsInEachClass[i].size();j++) {
+					Point[] currentNucleus = objectsInEachClass[i].get(j);
+					int[] xPts = new int[currentNucleus.length], yPts = new int[currentNucleus.length];
+					for(int p=0;p<xPts.length;p++) {
+						xPts[p] = currentNucleus[p].x;
+						yPts[p] = currentNucleus[p].y;
+					}
+					PointRoi pr = new PointRoi(xPts, yPts, xPts.length);
+					ShapeRoi sr = new ShapeRoi(pr);
+					rm.addRoi(sr);
+				}
+			}
+			
+			int nbObjects=0;
+			for(int i=0;i<numOfClasses;i++) {
+				nbObjects += objectsInEachClass[i].size();
+			}
+			ResultsTable rt = rm.multiMeasure(displayImage);
+			rm.close();
+			int nbCols=0;
+			for  (int cnt=0;cnt<10000000; cnt++) {
+				if (rt.columnExists(cnt)){
+					nbCols++;
+				}
+			}
+			int nbFeatures = nbCols/nbObjects;
+			int[] intensityFeatures = new int[nbFeatures];
+			for(int k=0;k<nbFeatures;k++) {
+				double value1 = rt.getValueAsDouble(k, 0), value2 = rt.getValueAsDouble(k, 1);
+				if(value2!=value1) {
+					intensityFeatures[k] = 1;
+				}
+			}
+			
+			final ResultsTable finalRt = new ResultsTable();
+			int rtIndex=0;
+			for(int i=0;i<numOfClasses;i++) {
+				for(int j=0;j<objectsInEachClass[i].size();j++) {
+					finalRt.incrementCounter();
+					for(int k=0;k<nbFeatures;k++) {
+						if(intensityFeatures[k]==0) {
+							finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1), rt.getValueAsDouble(rtIndex, 0));
+							rtIndex++;
+						}
+						else {
+							for(int c=0;c<numOfChannels;c++) {
+								finalRt.addValue(rt.getColumnHeading(k).substring(0, rt.getColumnHeading(k).length() - 1)+"Ch"+(c+1), rt.getValueAsDouble(rtIndex, c));
+							}
+							rtIndex++;
+						}
+					}
+					finalRt.addValue("Class", i+1);
+					//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+					Point[] pl = objectsInEachClass[i].get(j);
+					int overlayId = roiFlag[pl[pl.length/2].x][pl[pl.length/2].y][2];
+
+					for(int k=0;k<numOfMarkers;k++) {
+						int pattern = 0;
+						for(int p=0;p<4;p++) {
+							for(int q = 0; q < positiveNucleiForEachMarker[k][p].size(); q++) {
+								if(positiveNucleiForEachMarker[k][p].get(q)==overlayId){
+									pattern = p+1;
+								}
+							}
+						}
+						finalRt.addValue("Marker "+(k+1), pattern);
+					}
+				}
+			}
+			finalRt.save(outputPath);
 		}
 	}
 	/** illustration of markers wrt to identified objects */
@@ -7207,7 +8337,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 					int overlayId = positiveNucleiForEachMarker[k][p].get(q), currentClass=0, currentObject=0;;
 					for(int i=0;i<numOfClasses;i++) {
 						for(int j=0;j<objectsInEachClass[i].size();j++) {
-							if(roiFlag[(int)objectsInEachClass[i].get(j).xpoints[objectsInEachClass[i].get(j).xpoints.length/2]][(int)objectsInEachClass[i].get(j).ypoints[objectsInEachClass[i].get(j).xpoints.length/2]][2]==overlayId) {
+							//Polygon pl = objectsInEachClass[i].get(j).getPolygon();
+							Point[] pl = objectsInEachClass[i].get(j);
+							if(roiFlag[pl[pl.length/2].x][pl[pl.length/2].y][2]==overlayId) {
 								currentClass = i;
 								currentObject = j;
 							}
@@ -7250,7 +8382,14 @@ public class Annotater<T extends RealType<T>> implements Command {
 		markersOverlay = new Overlay();
 		for(int c=0;c<numOfClasses;c++) {
 			for(int r=0;r<objectsInEachClass[c].size();r++) {
-				drawNewObjectContour(objectsInEachClass[c].get(r).xpoints,objectsInEachClass[c].get(r).ypoints,c);
+				//Polygon pl = objectsInEachClass[c].get(r).getPolygon();
+				Point[] pl = objectsInEachClass[c].get(r);
+				int[] xPoints = new int[pl.length], yPoints = new int[pl.length];
+				for(int i=0;i<pl.length;i++) {
+					xPoints[i] = pl[i].x;
+					yPoints[i] = pl[i].y;
+				}
+				drawNewObjectContour(xPoints,yPoints,c);
 			}
 		}
 		displayImage.setOverlay(overlay);
@@ -7330,7 +8469,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			class5ColorButton.removeActionListener(listener);
 			class5RemoveButton.removeActionListener(listener);
 			objectsInEachClass = new ArrayList[MAX_NUM_CLASSES];
-			objectsInEachClass[0] = new ArrayList<FloatPolygon>();
+			objectsInEachClass[0] = new ArrayList<Point[]>();
 			numOfClasses = 1;
 			for(int c=1;c<stack.getSize();c++) {
 				addNewClass();
@@ -7349,19 +8488,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 			for(int i = 0; i < numOfMarkers; i++) {
 				for(int p=0;p<4;p++) {
 					positiveNucleiForEachMarker[i][p] = null;
-					objectsForEachMarkerAndEachPattern[i][p] = null;
 				}
 				positiveNucleiForEachMarker[i] = null;
-				objectsForEachMarkerAndEachPattern[i] = null;
 			}
 			positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
-			objectsForEachMarkerAndEachPattern = new ArrayList[MAX_NUM_MARKERS][4];
 			numOfMarkers = 0;
-			for(int i = 0; i < 10; i++) {
-				for(int p=0;p<4;p++) {
-					markerColors[i][p] = p+4;
+			for(byte i = 0; i < MAX_NUM_MARKERS; i++) {
+				for(byte p=0;p<4;p++) {
+					markerColors[i][p] = (byte)(p+4);
 				}
 				markerCellcompartment[i] = 0;
+				channelForMarker[i] = -1;
+				thresholdForMarker[i][0] = -1;
+				thresholdForMarker[i][1] = -1;
 			}
 			removeMarker1ButtonFromListener();
 			removeMarker2ButtonFromListener();
@@ -7370,17 +8509,13 @@ public class Annotater<T extends RealType<T>> implements Command {
 			removeMarker5ButtonFromListener();
 			removeMarker6ButtonFromListener();
 			removeMarker7ButtonFromListener();
-			removeMarker8ButtonFromListener();
-			removeMarker9ButtonFromListener();
-			removeMarker10ButtonFromListener();
 			
 			for(int i = 0; i < numOfMarkers; i++) {
 				for(int p=0;p<4;p++) {
-					positiveNucleiForEachMarker[i][p] = new ArrayList<Integer>();
-					objectsForEachMarkerAndEachPattern[i][p] = new ArrayList<FloatPolygon>();
+					positiveNucleiForEachMarker[i][p] = new ArrayList<Short>();
 				}
 			}
-			for(int c=0;c<stack.getSize();c++) {
+			for(byte c=0;c<stack.getSize();c++) {
 				currentClass = c;
 				ImageProcessor ip = stack.getProcessor(c+1);
 				ImageStatistics roiStats = segmentedImage.getStatistics();
@@ -7414,8 +8549,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 					{
 						IJ.showProgress(globalCurrentIndex, (int)nbRois);
 						if(xCoords[i-minIndex].size()>25) {
-							float[] xPoints = new float[xCoords[i-minIndex].size()];
-							float[] yPoints = new float[xCoords[i-minIndex].size()];
+							int[] xPoints = new int[xCoords[i-minIndex].size()];
+							int[] yPoints = new int[xCoords[i-minIndex].size()];
 							for(int u = 0; u< xCoords[i-minIndex].size(); u++)
 							{
 								xPoints[u] = xCoords[i-minIndex].get(u);
@@ -7437,8 +8572,8 @@ public class Annotater<T extends RealType<T>> implements Command {
 											}
 										}
 									}
-									float[] xUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
-									float[] yUpdatedPoints = new float[xPoints.length-nbPointsToRemove];
+									int[] xUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
+									int[] yUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
 									int currentPtIndex=0;
 									for(int u = 0; u< xPoints.length; u++) {
 										if(pointsToRemoveIndexes[u]<1) {
@@ -7452,28 +8587,32 @@ public class Annotater<T extends RealType<T>> implements Command {
 									xPoints = xUpdatedPoints;
 									yPoints = yUpdatedPoints;
 									// add nucleus to the list of nuclei
+									Point[] roiPoints = new Point[xPoints.length];
 									for(int u = 0; u< xPoints.length; u++) {
 										roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
-										roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[currentClass].size();
-										roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+										roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+										roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = (short)(overlay.size()-1);
+										roiPoints[u] = new Point(xPoints[u],yPoints[u]);
 									}
 									// define polygon and roi corresponding to the new region
-									FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+									//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 									// save new nucleus as roi in the corresponding class
-									objectsInEachClass[currentClass].add(fPoly);
+									objectsInEachClass[currentClass].add(roiPoints);
 								}
 							}
 							else {
 								// add nucleus to the list of nuclei
+								Point[] roiPoints = new Point[xPoints.length];
 								for(int u = 0; u< xPoints.length; u++) {
 									roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
-									roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = objectsInEachClass[currentClass].size();
-									roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = overlay.size()-1;
+									roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+									roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = (short)(overlay.size()-1);
+									roiPoints[u] = new Point(xPoints[u],yPoints[u]);
 								}
 								// define polygon and roi corresponding to the new region
-								FloatPolygon fPoly = new FloatPolygon(xPoints,yPoints);
+								//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
 								// save new nucleus as roi in the corresponding class
-								objectsInEachClass[currentClass].add(fPoly);
+								objectsInEachClass[currentClass].add(roiPoints);
 							}
 						}
 						globalCurrentIndex++;
@@ -7493,7 +8632,239 @@ public class Annotater<T extends RealType<T>> implements Command {
 		displayImage.updateAndDraw();		
 		segmentedImage = null;
 	}
+	private void loadNucleiSegmentations(ImagePlus segmentedImage) 
+	{
+		if (null == segmentedImage) return; // user canceled open dialog
+		else {
+			
+			ImageStack stack = segmentedImage.getStack();
+			int[] nucleiDims = segmentedImage.getDimensions();
 
+			// test on nuclei segmentation image dimensions
+			if ((nucleiDims[2]>1)&&(nucleiDims[3]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with segmented nuclei cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((nucleiDims[2]>1)&&(nucleiDims[4]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with segmented nuclei cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((nucleiDims[3]>1)&&(nucleiDims[4]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with segmented nuclei cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((nucleiDims[0]!=displayImage.getWidth())||(nucleiDims[1]!=displayImage.getHeight())) {
+				IJ.showMessage("Incompatible dimension", "The image with segmented nuclei must be the same dimension than the original image with a number of channels corresponding to the number of classes");
+				return; 
+			}
+
+			// redimension nuclei segmentation image if needed to fit the expected format
+			if (nucleiDims[2]>1){
+				segmentedImage = HyperStackConverter.toHyperStack(segmentedImage, 1, nucleiDims[2], 1);
+				stack = segmentedImage.getStack();
+			}
+			else if(nucleiDims[4]>1){
+				segmentedImage = HyperStackConverter.toHyperStack(segmentedImage, 1, nucleiDims[4], 1);
+				stack = segmentedImage.getStack();
+			}
+			// reinitialize everything
+			// roiFlag
+			for(int y=0; y<displayImage.getHeight(); y++)
+			{
+				for(int x=0; x<displayImage.getWidth(); x++)
+				{
+					roiFlag[x][y][0] = -1;
+					roiFlag[x][y][1] = -1;
+					roiFlag[x][y][2] = -1;
+				}
+			}
+			// overlays
+			overlay = new Overlay();
+			markersOverlay = new Overlay();
+			// objects in each class
+			boolean refresh = false;
+			if(numOfClasses!=stack.getSize()) {
+				refresh = true;
+				for(int i=stack.getSize();i<5;i++) {
+					classColors[i] = -1;
+				}
+			}
+			for(int c=0;c<numOfClasses;c++) {
+				objectsInEachClass[c] = null;
+			}
+			class2ColorButton.removeActionListener(listener);
+			class2RemoveButton.removeActionListener(listener);
+			class3ColorButton.removeActionListener(listener);
+			class3RemoveButton.removeActionListener(listener);
+			class4ColorButton.removeActionListener(listener);
+			class4RemoveButton.removeActionListener(listener);
+			class5ColorButton.removeActionListener(listener);
+			class5RemoveButton.removeActionListener(listener);
+			objectsInEachClass = new ArrayList[MAX_NUM_CLASSES];
+			objectsInEachClass[0] = new ArrayList<Point[]>();
+			numOfClasses = 1;
+			for(int c=1;c<stack.getSize();c++) {
+				addNewClass();
+			}
+			if(refresh) {
+				//Build GUI
+				SwingUtilities.invokeLater(
+						new Runnable() {
+							public void run() {
+								win = new CustomWindow(displayImage);
+								win.pack();
+							}
+						});
+			}
+			// nuclei markers
+			for(int i = 0; i < numOfMarkers; i++) {
+				for(int p=0;p<4;p++) {
+					positiveNucleiForEachMarker[i][p] = null;
+				}
+				positiveNucleiForEachMarker[i] = null;
+			}
+			positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
+			numOfMarkers = 0;
+			for(byte i = 0; i < MAX_NUM_MARKERS; i++) {
+				for(byte p=0;p<4;p++) {
+					markerColors[i][p] = (byte)(p+4);
+				}
+				markerCellcompartment[i] = 0;
+				channelForMarker[i] = -1;
+				thresholdForMarker[i][0] = -1;
+				thresholdForMarker[i][1] = -1;
+			}
+			removeMarker1ButtonFromListener();
+			removeMarker2ButtonFromListener();
+			removeMarker3ButtonFromListener();
+			removeMarker4ButtonFromListener();
+			removeMarker5ButtonFromListener();
+			removeMarker6ButtonFromListener();
+			removeMarker7ButtonFromListener();
+			
+			for(int i = 0; i < numOfMarkers; i++) {
+				for(int p=0;p<4;p++) {
+					positiveNucleiForEachMarker[i][p] = new ArrayList<Short>();
+				}
+			}
+			for(byte c=0;c<stack.getSize();c++) {
+				currentClass = c;
+				ImageProcessor ip = stack.getProcessor(c+1);
+				ImageStatistics roiStats = segmentedImage.getStatistics();
+				double nbRois = roiStats.max;
+
+				boolean out=false;
+
+				int minIndex=1, maxIndex=1000, globalCurrentIndex=1;
+				if(maxIndex>nbRois) {maxIndex = (int)nbRois;}
+				while(!out) {
+					List<Integer> [] xCoords = new ArrayList[maxIndex-minIndex+1], yCoords = new ArrayList[maxIndex-minIndex+1];
+					int currentIndex=0;
+					for(int i = minIndex; i <= maxIndex; i++)
+					{
+						xCoords[currentIndex] = new ArrayList<Integer>();
+						yCoords[currentIndex] = new ArrayList<Integer>();
+						currentIndex++;
+					}
+					for(int y=0; y<nucleiDims[1]; y++)
+					{
+						for(int x=0; x<nucleiDims[0]; x++)
+						{
+							float value = ip.getf(x,y);
+							if((value>=minIndex)&&(value<=maxIndex)){
+								xCoords[(int)value-minIndex].add(x);
+								yCoords[(int)value-minIndex].add(y);
+							}
+						}
+					}
+					for(int i = minIndex; i <= maxIndex; i++)
+					{
+						IJ.showProgress(globalCurrentIndex, (int)nbRois);
+						if(xCoords[i-minIndex].size()>25) {
+							int[] xPoints = new int[xCoords[i-minIndex].size()];
+							int[] yPoints = new int[xCoords[i-minIndex].size()];
+							for(int u = 0; u< xCoords[i-minIndex].size(); u++)
+							{
+								xPoints[u] = xCoords[i-minIndex].get(u);
+								yPoints[u] = yCoords[i-minIndex].get(u);
+							}
+							// displaying
+							List<Point> ptsToRemove = drawNewObjectContour(xPoints,yPoints,currentClass);
+							if(ptsToRemove.size()>0) {
+								// remove points that have no neighbors
+								// if point has coordinates -1,-1 => this nucleus has to be removed
+								if(ptsToRemove.get(0).x!=(-1)) {
+									int [] pointsToRemoveIndexes = new int[xPoints.length];
+									int nbPointsToRemove=0;
+									for(int p=0;p<ptsToRemove.size();p++) {
+										for(int u = 0; u< xPoints.length; u++) {
+											if(((int)xPoints[u]==ptsToRemove.get(p).x)&&((int)yPoints[u]==ptsToRemove.get(p).y)) {
+												pointsToRemoveIndexes[u] = 1;
+												nbPointsToRemove++;
+											}
+										}
+									}
+									int[] xUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
+									int[] yUpdatedPoints = new int[xPoints.length-nbPointsToRemove];
+									int currentPtIndex=0;
+									for(int u = 0; u< xPoints.length; u++) {
+										if(pointsToRemoveIndexes[u]<1) {
+											xUpdatedPoints[currentPtIndex] = xPoints[u];
+											yUpdatedPoints[currentPtIndex] = yPoints[u];
+											currentPtIndex++;
+										}
+									}
+									xPoints = null;
+									yPoints = null;
+									xPoints = xUpdatedPoints;
+									yPoints = yUpdatedPoints;
+									// add nucleus to the list of nuclei
+									Point[] roiPoints = new Point[xPoints.length];
+									for(int u = 0; u< xPoints.length; u++) {
+										roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
+										roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+										roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = (short)(overlay.size()-1);
+										roiPoints[u] = new Point(xPoints[u],yPoints[u]);
+									}
+									// define polygon and roi corresponding to the new region
+									//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
+									// save new nucleus as roi in the corresponding class
+									objectsInEachClass[currentClass].add(roiPoints);
+								}
+							}
+							else {
+								// add nucleus to the list of nuclei
+								Point[] roiPoints = new Point[xPoints.length];
+								for(int u = 0; u< xPoints.length; u++) {
+									roiFlag[(int)xPoints[u]][(int)yPoints[u]][0] = currentClass;
+									roiFlag[(int)xPoints[u]][(int)yPoints[u]][1] = (short)objectsInEachClass[currentClass].size();
+									roiFlag[(int)xPoints[u]][(int)yPoints[u]][2] = (short)(overlay.size()-1);
+									roiPoints[u] = new Point(xPoints[u],yPoints[u]);
+								}
+								// define polygon and roi corresponding to the new region
+								//PolygonRoi fPoly = new PolygonRoi(xPoints,yPoints,xPoints.length,Roi.FREEROI);
+								// save new nucleus as roi in the corresponding class
+								objectsInEachClass[currentClass].add(roiPoints);
+							}
+						}
+						globalCurrentIndex++;
+					}
+					minIndex = maxIndex+1;
+					if(maxIndex==(int)nbRois) {out = true;}
+					else
+					{
+						maxIndex += 1000;
+						if(maxIndex>(int)nbRois) {maxIndex = (int)nbRois;}
+					}
+				}
+			}
+		}
+		currentClass = 0;
+		displayImage.setOverlay(overlay);
+		displayImage.updateAndDraw();		
+		segmentedImage = null;
+	}
+	
 	/**
 	 * load marker identification
 	 */
@@ -7550,19 +8921,19 @@ public class Annotater<T extends RealType<T>> implements Command {
 			for(int i = 0; i < numOfMarkers; i++) {
 				for(int p=0;p<4;p++) {
 					positiveNucleiForEachMarker[i][p] = null;
-					objectsForEachMarkerAndEachPattern[i][p] = null;
 				}
 				positiveNucleiForEachMarker[i] = null;
-				objectsForEachMarkerAndEachPattern[i] = null;
 			}
 			positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
-			objectsForEachMarkerAndEachPattern = new ArrayList[MAX_NUM_MARKERS][4];
 			numOfMarkers = 0;
-			for(int i = 0; i < 10; i++) {
-				for(int p=0;p<4;p++) {
-					markerColors[i][p] = p+4;
+			for(byte i = 0; i < MAX_NUM_MARKERS; i++) {
+				for(byte p=0;p<4;p++) {
+					markerColors[i][p] = (byte)(p+4);
 				}
 				markerCellcompartment[i] = 0;
+				channelForMarker[i] = -1;
+				thresholdForMarker[i][0] = -1;
+				thresholdForMarker[i][1] = -1;
 			}
 			removeMarker1ButtonFromListener();
 			removeMarker2ButtonFromListener();
@@ -7571,15 +8942,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 			removeMarker5ButtonFromListener();
 			removeMarker6ButtonFromListener();
 			removeMarker7ButtonFromListener();
-			removeMarker8ButtonFromListener();
-			removeMarker9ButtonFromListener();
-			removeMarker10ButtonFromListener();
 			
 			for(int i = 0; i < stack.getSize(); i++) {
-				addNewMarker();
+				boolean keepGoing = addNewMarker();
 				for(int p=0;p<4;p++) {
-					positiveNucleiForEachMarker[i][p] = new ArrayList<Integer>();
-					objectsForEachMarkerAndEachPattern[i][p] = new ArrayList<FloatPolygon>();
+					positiveNucleiForEachMarker[i][p] = new ArrayList<Short>();
 				}
 			}
 			
@@ -7595,7 +8962,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 						if(value>maxValue) {maxValue = value;}
 					}
 				}
-				if(maxValue>3) {
+				if(maxValue>4) {
 					for(int y=0; y<markerDims[1]; y++)
 					{
 						for(int x=0; x<markerDims[0]; x++)
@@ -7625,20 +8992,156 @@ public class Annotater<T extends RealType<T>> implements Command {
 								}
 								if(add) {
 									positiveNucleiForEachMarker[c][value-1].add(roiFlag[x][y][2]);
-									for(int i=0;i<numOfClasses;i++) {
-										for(int j=0;j<objectsInEachClass[i].size();j++) {
-											FloatPolygon fp = objectsInEachClass[i].get(j);
-											boolean in=false;
-											for(int k=0;k<fp.npoints;k++) {
-												if((x==fp.xpoints[k])&&(y==fp.ypoints[k])) {
-													in = true;
-												}
-											}
-											if(in) {
-												objectsForEachMarkerAndEachPattern[c][value-1].add(fp);
-											}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		currentMarker = -1;
+		
+		//Build GUI
+		SwingUtilities.invokeLater(
+				new Runnable() {
+					public void run() {
+						win = new CustomWindow(displayImage);
+						win.pack();
+					}
+				});
+
+		// refresh overlay
+		IJ.wait(150);
+		displayImage.setOverlay(markersOverlay);
+		displayImage.updateAndDraw();
+		markerImage = null;
+	}
+	/**
+	 * load marker identification
+	 */
+	private void loadMarkerIdentifications(ImagePlus markerImage) 
+	{
+		if (null == markerImage) return; // user canceled open dialog
+		else {
+
+			ImageStack stack = markerImage.getStack();
+			int[] markerDims = markerImage.getDimensions();
+			
+			// test on nuclei segmentation image dimensions
+			if ((markerDims[2]>1)&&(markerDims[3]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with annotated nuclei markers cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((markerDims[2]>1)&&(markerDims[4]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with annotated nuclei markers cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((markerDims[3]>1)&&(markerDims[4]>1)) {
+				IJ.showMessage("Incompatible dimension", "The image with annotated nuclei markers cannot have more than 3 dimensions: 1st and 2nd dimensions correspond to x and y, the 3rd dimension corresponds to the classe(s)");
+				return;
+			}
+			if ((markerDims[0]!=displayImage.getWidth())||(markerDims[1]!=displayImage.getHeight())) {
+				IJ.showMessage("Incompatible dimension", "The image with annotated nuclei markers must be the same dimension than the original image with a number of channels corresponding to the number of markers");
+				return; 
+			}
+			
+			// redimension nuclei segmentation image if needed to fit the expected format
+			if (markerDims[2]>1){
+				markerImage = HyperStackConverter.toHyperStack(markerImage, 1, markerDims[2], 1);
+				stack = markerImage.getStack();
+			}
+			else if(markerDims[4]>1){
+				markerImage = HyperStackConverter.toHyperStack(markerImage, 1, markerDims[4], 1);
+				stack = markerImage.getStack();
+			}
+			
+			// reinitialization
+			// markers overlay
+			for(int y=0; y<markerDims[1]; y++)
+			{
+				for(int x=0; x<markerDims[0]; x++)
+				{
+					if(roiFlag[x][y][2]>(-1)) {
+						markersOverlay.get(roiFlag[x][y][2]).setStrokeColor(colors[classColors[roiFlag[x][y][0]]]);
+						markersOverlay.get(roiFlag[x][y][2]).setStrokeWidth(0);
+					}
+				}
+			}
+			// nuclei markers
+			for(int i = 0; i < numOfMarkers; i++) {
+				for(int p=0;p<4;p++) {
+					positiveNucleiForEachMarker[i][p] = null;
+				}
+				positiveNucleiForEachMarker[i] = null;
+			}
+			positiveNucleiForEachMarker = new ArrayList[MAX_NUM_MARKERS][4];
+			numOfMarkers = 0;
+			for(byte i = 0; i < MAX_NUM_MARKERS; i++) {
+				for(byte p=0;p<4;p++) {
+					markerColors[i][p] = (byte)(p+4);
+				}
+				markerCellcompartment[i] = 0;
+				channelForMarker[i] = -1;
+				thresholdForMarker[i][0] = -1;
+				thresholdForMarker[i][1] = -1;
+			}
+			removeMarker1ButtonFromListener();
+			removeMarker2ButtonFromListener();
+			removeMarker3ButtonFromListener();
+			removeMarker4ButtonFromListener();
+			removeMarker5ButtonFromListener();
+			removeMarker6ButtonFromListener();
+			removeMarker7ButtonFromListener();
+			
+			for(int i = 0; i < stack.getSize(); i++) {
+				boolean keepGoing = addNewMarker();
+				for(int p=0;p<4;p++) {
+					positiveNucleiForEachMarker[i][p] = new ArrayList<Short>();
+				}
+			}
+			
+			// load nuclei markers
+			for(int c=0;c<stack.getSize();c++) {
+				ImageProcessor ip = stack.getProcessor(c+1);
+				int maxValue=0;
+				for(int y=0; y<markerDims[1]; y++)
+				{
+					for(int x=0; x<markerDims[0]; x++)
+					{
+						int value = (int)ip.getf(x,y);
+						if(value>maxValue) {maxValue = value;}
+					}
+				}
+				if(maxValue>4) {
+					for(int y=0; y<markerDims[1]; y++)
+					{
+						for(int x=0; x<markerDims[0]; x++)
+						{
+							int value = (int)ip.getf(x,y);
+							if(value>0){
+								ip.setf(x, y, 1);
+							}
+						}
+					}
+				}
+				for(int y=0; y<markerDims[1]; y++)
+				{
+					for(int x=0; x<markerDims[0]; x++)
+					{
+						
+						int value = (int)ip.getf(x,y);
+						if(value>0){
+							if(roiFlag[x][y][2]>(-1)) {
+								boolean add=true;
+								for(int p=0;p<4;p++) {
+									for(int i = 0; i < positiveNucleiForEachMarker[c][p].size(); i++) {
+										if(positiveNucleiForEachMarker[c][p].get(i)==roiFlag[x][y][2]) {
+											add = false;
 										}
 									}
+								}
+								if(add) {
+									positiveNucleiForEachMarker[c][value-1].add(roiFlag[x][y][2]);
 								}
 							}
 						}
@@ -7675,10 +9178,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 		for(int c=0;c<numOfClasses;c++) {
 			int[] nucleiMasks = new int[displayImage.getWidth()*displayImage.getHeight()];
 			for(int i=0;i<objectsInEachClass[c].size();i++) {
-				float[] xPts = objectsInEachClass[c].get(i).xpoints;
-				float[] yPts = objectsInEachClass[c].get(i).ypoints;
-				for(int j=0;j<xPts.length;j++) {
-					nucleiMasks[(int)yPts[j]*displayImage.getWidth()+(int)xPts[j]] = i+1;
+				//int[] xPts = objectsInEachClass[c].get(i).getPolygon().xpoints;
+				//int[] yPts = objectsInEachClass[c].get(i).getPolygon().ypoints;
+				Point[] fp = objectsInEachClass[c].get(i);
+				for(int j=0;j<fp.length;j++) {
+					nucleiMasks[fp[j].y*displayImage.getWidth()+fp[j].x] = i+1;
 				}
 			}
 			stack.addSlice(new FloatProcessor(displayImage.getWidth(), displayImage.getHeight(), nucleiMasks));
@@ -7699,22 +9203,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 	 */
 	private void saveNucleiIdentification() 
 	{
-		ImageStack stack = new ImageStack(displayImage.getWidth(), displayImage.getHeight());
-
-		for(int c=0;c<numOfMarkers;c++) {
-			int[] nucleiMarker = new int[displayImage.getWidth()*displayImage.getHeight()];
-			for(int p=0;p<4;p++) {
-				for(int i=0;i<objectsForEachMarkerAndEachPattern[c][p].size();i++) {
-					float[] xPts = objectsForEachMarkerAndEachPattern[c][p].get(i).xpoints;
-					float[] yPts = objectsForEachMarkerAndEachPattern[c][p].get(i).ypoints;
-					for(int j=0;j<xPts.length;j++) {
-						nucleiMarker[(int)yPts[j]*displayImage.getWidth()+(int)xPts[j]] = p+1;
-					}
-				}
-			}
-			stack.addSlice(new FloatProcessor(displayImage.getWidth(), displayImage.getHeight(), nucleiMarker));
-		}
-		ImagePlus segmentednuclei = new ImagePlus("Nuclei markers", stack);
 		SaveDialog sd = new SaveDialog("Identified nuclei", "IdentifiedNuclei", ".tif");
 		final String dir = sd.getDirectory();
 		final String filename = sd.getFileName();
@@ -7722,7 +9210,93 @@ public class Annotater<T extends RealType<T>> implements Command {
 		if(null == dir || null == filename)
 			return;
 
+		ImageStack stack = new ImageStack(displayImage.getWidth(), displayImage.getHeight());
+		int maxOverlayId=0;
+		for(int c=0;c<numOfMarkers;c++) {
+			for(int y=0;y<displayImage.getHeight();y++) {
+				for(int x=0;x<displayImage.getWidth();x++) {
+					if(roiFlag[x][y][2]>maxOverlayId) {maxOverlayId = roiFlag[x][y][2];} 
+				}
+			}
+		}
+		Point[] roiFlagCorrespondence = new Point[maxOverlayId+1];
+		for(int i=0;i<=maxOverlayId;i++) {
+			roiFlagCorrespondence[i] = new Point(-1,-1);
+		}
+		for(int y=0;y<displayImage.getHeight();y++) {
+			for(int x=0;x<displayImage.getWidth();x++) {
+				if(roiFlag[x][y][2]>(-1)) {
+					if(roiFlagCorrespondence[roiFlag[x][y][2]].x==(-1)) {
+						Point correspondingRoiFlagAttributes = new Point(roiFlag[x][y][0],roiFlag[x][y][1]);
+						roiFlagCorrespondence[roiFlag[x][y][2]] = correspondingRoiFlagAttributes;
+					}
+				}
+			}
+		}
+		for(int c=0;c<numOfMarkers;c++) {
+			int[] nucleiMarker = new int[displayImage.getWidth()*displayImage.getHeight()];
+			for(int p=0;p<4;p++) {
+				for(short k=0;k<positiveNucleiForEachMarker[c][p].size();k++) {
+					if(positiveNucleiForEachMarker[c][p].size()>0) {
+						//Polygon fp = objectsInEachClass[roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].x].get(roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].y).getPolygon();
+						Point[] fp = objectsInEachClass[roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].x].get(roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].y);
+						//int[] xPoints = fp.xpoints, yPoints = fp.ypoints;
+						for(int i=0;i<fp.length;i++) {
+							nucleiMarker[fp[i].y*displayImage.getWidth()+fp[i].x] = p+1;
+						}
+					}
+				}
+			}
+			stack.addSlice(new FloatProcessor(displayImage.getWidth(), displayImage.getHeight(), nucleiMarker));
+		}
+		ImagePlus segmentednuclei = new ImagePlus("Nuclei markers", stack);
+		
 		IJ.save(segmentednuclei, dir + filename);
+	}
+	private void saveNucleiIdentification(String outputFilename) 
+	{
+		ImageStack stack = new ImageStack(displayImage.getWidth(), displayImage.getHeight());
+		int maxOverlayId=0;
+		for(int c=0;c<numOfMarkers;c++) {
+			for(int y=0;y<displayImage.getHeight();y++) {
+				for(int x=0;x<displayImage.getWidth();x++) {
+					if(roiFlag[x][y][2]>maxOverlayId) {maxOverlayId = roiFlag[x][y][2];} 
+				}
+			}
+		}
+		Point[] roiFlagCorrespondence = new Point[maxOverlayId+1];
+		for(int i=0;i<=maxOverlayId;i++) {
+			roiFlagCorrespondence[i] = new Point(-1,-1);
+		}
+		for(int y=0;y<displayImage.getHeight();y++) {
+			for(int x=0;x<displayImage.getWidth();x++) {
+				if(roiFlag[x][y][2]>(-1)) {
+					if(roiFlagCorrespondence[roiFlag[x][y][2]].x==(-1)) {
+						Point correspondingRoiFlagAttributes = new Point(roiFlag[x][y][0],roiFlag[x][y][1]);
+						roiFlagCorrespondence[roiFlag[x][y][2]] = correspondingRoiFlagAttributes;
+					}
+				}
+			}
+		}
+		for(int c=0;c<numOfMarkers;c++) {
+			int[] nucleiMarker = new int[displayImage.getWidth()*displayImage.getHeight()];
+			for(int p=0;p<4;p++) {
+				for(short k=0;k<positiveNucleiForEachMarker[c][p].size();k++) {
+					if(positiveNucleiForEachMarker[c][p].size()>0) {
+						//Polygon fp = objectsInEachClass[roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].x].get(roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].y).getPolygon();
+						Point[] fp = objectsInEachClass[roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].x].get(roiFlagCorrespondence[positiveNucleiForEachMarker[c][p].get(k)].y);
+						//int[] xPoints = fp.xpoints, yPoints = fp.ypoints;
+						for(int i=0;i<fp.length;i++) {
+							nucleiMarker[fp[i].y*displayImage.getWidth()+fp[i].x] = p+1;
+						}
+					}
+				}
+			}
+			stack.addSlice(new FloatProcessor(displayImage.getWidth(), displayImage.getHeight(), nucleiMarker));
+		}
+		ImagePlus segmentednuclei = new ImagePlus("Nuclei markers", stack);
+		
+		IJ.save(segmentednuclei, outputFilename);
 	}
 
 	/**
