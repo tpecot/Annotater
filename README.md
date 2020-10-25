@@ -20,7 +20,7 @@ https://youtu.be/JGPAz1Lrh3k<br />
 A video tutorial showing how to associate markers with nuclei through Annotater is available here:<br />
 https://youtu.be/fMliJoXyWbI<br />
 
-A video tutorial that shows how to batch process (marker identification and feature extraction) with Annotater is available here:<br />
+A video tutorial that shows how to batch process images (marker identification and feature extraction) with Annotater is available here:<br />
 https://youtu.be/tR-lcomwzyM<br />
 
 The images used in these video tutorials are available in the folder data.
