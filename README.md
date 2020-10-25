@@ -11,7 +11,7 @@ https://youtu.be/dwRcHlkcHlI<br />
 A video tutorial that illustrates the visualization tools in Annotater is available here:<br />
 https://youtu.be/CnHBP-PfHCE<br />
 
-A video tutorial that showing how to annotate objects with Annotater is available here:<br />
+A video tutorial showing how to annotate objects with Annotater is available here:<br />
 https://youtu.be/8r9kXktrU18<br />
 
 A video tutorial that shows how to annotate regions with Annotater is available here:<br />
