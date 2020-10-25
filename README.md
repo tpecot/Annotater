@@ -17,7 +17,7 @@ https://youtu.be/8r9kXktrU18<br />
 A video tutorial that shows how to annotate regions with Annotater is available here:<br />
 https://youtu.be/JGPAz1Lrh3k<br />
 
-A video tutorial showing how to associate markers with nuclei with Annotater is available here:<br />
+A video tutorial showing how to associate markers with nuclei through Annotater is available here:<br />
 https://youtu.be/fMliJoXyWbI<br />
 
 A video tutorial that shows how to batch process (marker identification and feature extraction) with Annotater is available here:<br />
