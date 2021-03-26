@@ -11,8 +11,8 @@ Video tutorials with confocal images of mouse intestinal epithelium are availabl
 [Object annotation](https://youtu.be/8r9kXktrU18)<br />
 [Region annotation](https://youtu.be/JGPAz1Lrh3k)<br />
 [Associate markers with nuclei](https://youtu.be/fMliJoXyWbI)<br />
-[Batch processing (marker identification and feature extraction)](https://youtu.be/tR-lcomwzyM)
-The images used in these video tutorials are available in the folder data.
+[Batch processing (marker identification and feature extraction)](https://youtu.be/tR-lcomwzyM)<br>
+The images used in these video tutorials are available in the folder data.<br>
 
 The tutorial given at [I2K 2020](https://www.janelia.org/you-janelia/conferences/from-images-to-knowledge-with-imagej-friends) with 2D multiplexed immunofluorescence images of human precancerous polyps is available at:<br>
 [Tutorial@I2K](https://www.youtube.com/watch?app=desktop&v=GB4Eu8C52-4&feature=youtu.be)
