@@ -18,5 +18,5 @@ The tutorial given at [I2K 2020](https://www.janelia.org/you-janelia/conferences
 [Tutorial@I2K](https://www.youtube.com/watch?app=desktop&v=GB4Eu8C52-4&feature=youtu.be)
 
 # Citation
-Please cite our paper if you use this plugin: <br> <br>
+Please cite our paper if you use this plugin: <br>
 Thierry Pécot, Maria C. Cuitiño, Roger H. Johnson, Cynthia Timmers, Gustavo Leone (2021): [Deep learning tools and modeling to estimate the temporal expression of E2Fs over the cell cycle from 2D still images](https://www.biorxiv.org/content/10.1101/2021.03.01.433386v1)
