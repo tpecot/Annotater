@@ -5,15 +5,18 @@ ImageJ plugin for annotating multi-spectral 2D images.
 The Annotater was designed to efficiently manually annotate or correct 2D image segmentations (objects and/or areas) and to identify markers associated with objects, either by manually annotating them, by using a thresholding tool or by using a logistic regression.<br />
 
 # Video tutorials
-Video tutorials are available:<br>
+Video tutorials with confocal images of mouse intestinal epithelium are available:<br>
 [Download Fiji/ImageJ and install Annotater](https://youtu.be/dwRcHlkcHlI)<br />
-[Visualization tools in Annotater](https://youtu.be/CnHBP-PfHCE)
+[Visualization tools in Annotater](https://youtu.be/CnHBP-PfHCE)<br />
 [Object annotation](https://youtu.be/8r9kXktrU18)<br />
 [Region annotation](https://youtu.be/JGPAz1Lrh3k)<br />
 [Associate markers with nuclei through Annotater](https://youtu.be/fMliJoXyWbI)<br />
 [Batch processing (marker identification and feature extraction)](https://youtu.be/tR-lcomwzyM)<br />
 
 The images used in these video tutorials are available in the folder data.
+
+The tutorial given at [I2K 2020](https://www.janelia.org/you-janelia/conferences/from-images-to-knowledge-with-imagej-friends) for 2D multiplexed immunofluorescence images of human precancerous polyp is available at:<br>
+[Tutorial@I2K](https://www.youtube.com/watch?app=desktop&v=GB4Eu8C52-4&feature=youtu.be)
 
 # Citation
 Please cite our paper if you use this plugin: <br> <br>
