@@ -14,8 +14,8 @@ import java.util.ArrayList;
 
 import javax.imageio.ImageIO;
 
-import org.apache.commons.collections15.Bag;
-import org.apache.commons.collections15.bag.HashBag;
+//import org.apache.commons.collections15.Bag;
+//import org.apache.commons.collections15.bag.HashBag;
 
 import ij.IJ;
 import weka.classifiers.Classifier;
