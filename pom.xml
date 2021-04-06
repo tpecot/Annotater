@@ -14,10 +14,10 @@
 
 	<groupId>edu.musc.tsl</groupId>
 	<artifactId>2DAnnotater</artifactId>
-	<version>0.1</version>
+	<version>0.2</version>
 
 	<name>2D image annotater</name>
-	<description>A plugin to efficiently annotate 2D images used by deep learning classifiers.</description>
+	<description>A plugin to efficiently manually annotate or correct 2D image segmentations (objects and/or areas) and to identify markers associated with objects, either by manually annotating them, by using a thresholding tool or by using a logistic regression.</description>
 	<url>https://www.hollingscancercenter.org/research/shared-resources/tsl/index.html</url>
 	<inceptionYear>2017</inceptionYear>
 	<organization>
