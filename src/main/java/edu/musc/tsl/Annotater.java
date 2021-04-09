@@ -5,55 +5,32 @@ http://www.gnu.org/licenses/agpl-3.0.txt
 
 package edu.musc.tsl;
 
-//import net.imagej.plugins.commands.binary.MakeBinary;
-//import net.imagej.plugins.commands.misc.ApplyLookupTable;
 import net.imglib2.type.numeric.RealType;
-//import scala.collection.Iterator.GroupedIterator;
 
 import org.apache.commons.lang3.ObjectUtils.Null;
-//import org.codehaus.groovy.runtime.dgmimpl.NumberNumberMetaMethod;
-//import org.python.apache.xerces.dom.PSVIDOMImplementationImpl;
-//import org.python.indexer.ast.NBlock;
 import org.scijava.command.Command;
 import org.scijava.plugin.Plugin;
-
-import edu.mines.jtk.awt.ColorMap;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.lang.Math;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.*;
 
-import fiji.util.gui.GenericDialogPlus;
-import fiji.util.gui.OverlayedImageCanvas;
-import ij.IJ;
+import ij.*;
+import ij.Prefs.*;
+import ij.gui.*;
+import ij.process.*;
 import ij.measure.*;
-import ij.io.DirectoryChooser;
-import ij.io.OpenDialog;
-import ij.io.Opener;
+import ij.io.*;
+import ij.util.Tools;
+import ij.IJ.*;
 import ij.plugin.frame.RoiManager;
 import ij.plugin.filter.ParticleAnalyzer;
 import ij.ImagePlus;
 import ij.ImageStack;
 import ij.LookUpTable;
 import ij.WindowManager;
-import ij.gui.FreehandRoi;
-import ij.gui.ImageWindow;
-import ij.gui.Overlay;
-import ij.gui.PointRoi;
-import ij.gui.ImageRoi;
-import ij.gui.PolygonRoi;
-import ij.gui.Roi;
-import ij.gui.RoiProperties;
-import ij.gui.ShapeRoi;
-import ij.gui.Wand;
-import ij.gui.Toolbar;
-import ij.io.SaveDialog;
 import ij.plugin.CompositeConverter;
 import ij.plugin.Duplicator;
 import ij.plugin.HyperStackConverter;
@@ -61,67 +38,28 @@ import ij.plugin.filter.Analyzer;
 import ij.plugin.filter.Binary;
 import ij.plugin.filter.LutApplier;
 import ij.plugin.filter.GaussianBlur;
-import ij.process.ImageConverter;
-import ij.process.FloatPolygon;
-import ij.process.FloatProcessor;
-import ij.process.ImageProcessor;
-import ij.process.ImageStatistics;
-import ij.process.LUT;
-import ij.process.EllipseFitter;
-import ij.measure.ResultsTable;
 import ij.macro.Interpreter;
 import ij.Macro;
+import ij.plugin.frame.Editor;
+import ij.text.TextWindow;
 
-import java.awt.image.IndexColorModel;
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.Insets;
-import java.awt.Panel;
-import java.awt.Point;
-import java.awt.Rectangle;
-import java.awt.Polygon;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
-import java.awt.event.KeyListener;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
-import java.awt.image.ColorModel;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseListener;
+import fiji.util.gui.GenericDialogPlus;
+import fiji.util.gui.OverlayedImageCanvas;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.lang.reflect.*;
 
-import javax.swing.BorderFactory;
-import javax.swing.JButton;
-import javax.swing.JFileChooser;
-import javax.swing.JRadioButton;
-import javax.swing.JSlider;
-import javax.swing.JTextField;
-import javax.swing.JTextArea;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-import javax.swing.ButtonGroup;
+import java.awt.*;
+import java.awt.image.*;
+import java.awt.event.*;
 
-import weka.classifiers.Classifier;
-import weka.classifiers.bayes.NaiveBayes;
-import weka.core.Instance;
-import weka.core.Instances;
-import weka.core.DenseInstance;
+import java.util.*;
+import java.util.concurrent.*;
+
+import javax.swing.*;
+import javax.swing.event.*;
+
+import weka.classifiers.*;
+import weka.core.*;
 
 @Plugin(type = Command.class, menuPath = "Plugins>Annotater")
 public class Annotater<T extends RealType<T>> implements Command {
@@ -567,214 +505,395 @@ public class Annotater<T extends RealType<T>> implements Command {
 	public Annotater() 
 	{
 		objectsAnnotationButton = new JRadioButton("Object annotation");
+		scale(objectsAnnotationButton);
 		markerAnnotationButton = new JRadioButton("Marker annotation");
+		scale(markerAnnotationButton);
 
 		newObjectButton = new JRadioButton("Add object");
+		scale(newObjectButton);
 		newObjectButton.setToolTipText("Each ROI creates a new object");
 
 		removeObjectButton = new JRadioButton("Remove object");
+		scale(removeObjectButton);
 		removeObjectButton.setToolTipText("Remove object");		
 
 		mergeObjectsButton = new JRadioButton("Merge objects");
+		scale(mergeObjectsButton);
 		mergeObjectsButton.setToolTipText("Consecutively clicked objects are merged");
 
 		splitObjectsButton = new JRadioButton("Split object");
+		scale(splitObjectsButton);
 		splitObjectsButton.setToolTipText("Draw ROI inside an object to split it into two");
 
 		swapObjectClassButton = new JRadioButton("Swap class");
+		scale(swapObjectClassButton);
 		swapObjectClassButton.setToolTipText("Swap object class");
 
 		addClassButton = new JButton("Add new class");
+		scale(addClassButton);
 		class1Button = new JRadioButton("Class 1");
+		scale(class1Button);
 		class2Button = new JRadioButton("Class 2");
+		scale(class2Button);
 		class3Button = new JRadioButton("Class 3");
+		scale(class3Button);
 		class4Button = new JRadioButton("Class 4");
+		scale(class4Button);
 		class5Button = new JRadioButton("Class 5");
+		scale(class5Button);
 
 		class1ColorButton = new JButton("Color");
+		scale(class1ColorButton);
 		class2ColorButton = new JButton("Color");
+		scale(class2ColorButton);
 		class3ColorButton = new JButton("Color");
+		scale(class3ColorButton);
 		class4ColorButton = new JButton("Color");
+		scale(class4ColorButton);
 		class5ColorButton = new JButton("Color");
+		scale(class5ColorButton);
 
 		class1RemoveButton = new JButton("Remove");
+		scale(class1RemoveButton);
 		class2RemoveButton = new JButton("Remove");
+		scale(class2RemoveButton);
 		class3RemoveButton = new JButton("Remove");
+		scale(class3RemoveButton);
 		class4RemoveButton = new JButton("Remove");
+		scale(class4RemoveButton);
 		class5RemoveButton = new JButton("Remove");
+		scale(class5RemoveButton);
 
 		newAreaButton = new JRadioButton("Add area");
+		scale(newAreaButton);
 		removeAreaButton = new JRadioButton("Remove area");
+		scale(removeAreaButton);
 		swapAreaClassButton = new JRadioButton("Swap class");
+		scale(swapAreaClassButton);
 
 		addAreaButton = new JButton("Add new class");
+		scale(addAreaButton);
 		area1Button = new JRadioButton("Class 1");
+		scale(area1Button);
 		area2Button = new JRadioButton("Class 2");
+		scale(area2Button);
 		area3Button = new JRadioButton("Class 3");
+		scale(area3Button);
 		area4Button = new JRadioButton("Class 4");
+		scale(area4Button);
 		area5Button = new JRadioButton("Class 5");
+		scale(area5Button);
 
 		area1ColorButton = new JButton("Color");
+		scale(area1ColorButton);
 		area2ColorButton = new JButton("Color");
+		scale(area2ColorButton);
 		area3ColorButton = new JButton("Color");
+		scale(area3ColorButton);
 		area4ColorButton = new JButton("Color");
+		scale(area4ColorButton);
 		area5ColorButton = new JButton("Color");
+		scale(area5ColorButton);
 
 		area1RemoveButton = new JButton("Remove");
+		scale(area1RemoveButton);
 		area2RemoveButton = new JButton("Remove");
+		scale(area2RemoveButton);
 		area3RemoveButton = new JButton("Remove");
+		scale(area3RemoveButton);
 		area4RemoveButton = new JButton("Remove");
+		scale(area4RemoveButton);
 		area5RemoveButton = new JButton("Remove");
+		scale(area5RemoveButton);
 
 		loadSegmentationButton = new JButton("Load");
+		scale(loadSegmentationButton);
 		saveSegmentationButton = new JButton("Save");
+		scale(saveSegmentationButton);
 		loadAreaButton = new JButton("Load");
+		scale(loadAreaButton);
 		saveAreaButton = new JButton("Save");
+		scale(saveAreaButton);
 		analyzeClassesButton = new JButton("Measurements");
+		scale(analyzeClassesButton);
 		classSnapshotButton = new JButton("Snapshot");
+		scale(classSnapshotButton);
 		batchClassesMeasurementsButton = new JButton("Batch");
+		scale(batchClassesMeasurementsButton);
 		overlay = new Overlay();
 		areaOverlay = new Overlay();
 
 		visualizeChannel1onlyButton1 = new JRadioButton("Channel1 only");
+		scale(visualizeChannel1onlyButton1);
 		visualizeChannel2onlyButton1 = new JRadioButton("Channel2 only");
+		scale(visualizeChannel2onlyButton1);
 		visualizeChannel3onlyButton1 = new JRadioButton("Channel3 only");
+		scale(visualizeChannel3onlyButton1);
 		visualizeChannel4onlyButton1 = new JRadioButton("Channel4 only");
+		scale(visualizeChannel4onlyButton1);
 		visualizeChannel5onlyButton1 = new JRadioButton("Channel5 only");
+		scale(visualizeChannel5onlyButton1);
 		visualizeChannel6onlyButton1 = new JRadioButton("Channel6 only");
+		scale(visualizeChannel6onlyButton1);
 		visualizeChannel7onlyButton1 = new JRadioButton("Channel7 only");
+		scale(visualizeChannel7onlyButton1);
 		visualizeChannel1Button1 = new JRadioButton("Channel1");
+		scale(visualizeChannel1Button1);
 		visualizeChannel2Button1 = new JRadioButton("Channel2");
+		scale(visualizeChannel2Button1);
 		visualizeChannel3Button1 = new JRadioButton("Channel3");
+		scale(visualizeChannel3Button1);
 		visualizeChannel4Button1 = new JRadioButton("Channel4");
+		scale(visualizeChannel4Button1);
 		visualizeChannel5Button1 = new JRadioButton("Channel5");
+		scale(visualizeChannel5Button1);
 		visualizeChannel6Button1 = new JRadioButton("Channel6");
+		scale(visualizeChannel6Button1);
 		visualizeChannel7Button1 = new JRadioButton("Channel7");
+		scale(visualizeChannel7Button1);
 		visualizeAllChannelsButton1 = new JRadioButton("All channels");
+		scale(visualizeAllChannelsButton1);
 
 		visualizeChannel1onlyButton2 = new JRadioButton("Channel1 only");
+		scale(visualizeChannel1onlyButton2);
 		visualizeChannel2onlyButton2 = new JRadioButton("Channel2 only");
+		scale(visualizeChannel2onlyButton2);
 		visualizeChannel3onlyButton2 = new JRadioButton("Channel3 only");
+		scale(visualizeChannel3onlyButton2);
 		visualizeChannel4onlyButton2 = new JRadioButton("Channel4 only");
+		scale(visualizeChannel4onlyButton2);
 		visualizeChannel5onlyButton2 = new JRadioButton("Channel5 only");
+		scale(visualizeChannel5onlyButton2);
 		visualizeChannel6onlyButton2 = new JRadioButton("Channel6 only");
+		scale(visualizeChannel6onlyButton2);
 		visualizeChannel7onlyButton2 = new JRadioButton("Channel7 only");
+		scale(visualizeChannel7onlyButton2);
 		visualizeChannel1Button2 = new JRadioButton("Channel1");
+		scale(visualizeChannel1Button2);
 		visualizeChannel2Button2 = new JRadioButton("Channel2");
+		scale(visualizeChannel2Button2);
 		visualizeChannel3Button2 = new JRadioButton("Channel3");
+		scale(visualizeChannel3Button2);
 		visualizeChannel4Button2 = new JRadioButton("Channel4");
+		scale(visualizeChannel4Button2);
 		visualizeChannel5Button2 = new JRadioButton("Channel5");
+		scale(visualizeChannel5Button2);
 		visualizeChannel6Button2 = new JRadioButton("Channel6");
+		scale(visualizeChannel6Button2);
 		visualizeChannel7Button2 = new JRadioButton("Channel7");
+		scale(visualizeChannel7Button2);
 		visualizeAllChannelsButton2 = new JRadioButton("All channels");
+		scale(visualizeAllChannelsButton2);
 
 		visualizeObjectsButton1 = new JRadioButton("Objects");
+		scale(visualizeObjectsButton1);
 		visualizeObjectsButton1.setSelected(true);
 		visualizeAreasButton1 = new JRadioButton("Regions");
+		scale(visualizeAreasButton1);
 		visualizeAreasButton1.setSelected(true);
 		visualizeObjectsButton2 = new JRadioButton("Objects");
+		scale(visualizeObjectsButton2);
 		visualizeAreasButton2 = new JRadioButton("Regions");
+		scale(visualizeAreasButton2);
 		
 		loadImageAndSegmentationButton = new JButton("Load");
+		scale(loadImageAndSegmentationButton);
 		
 		addObjectAssociatedMarkerButton = new JButton("Add new marker");
+		scale(addObjectAssociatedMarkerButton);
 		objectAssociatedMarker1Button = new JRadioButton("Marker1");
+		scale(objectAssociatedMarker1Button);
 		objectAssociatedMarker1ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker1ColorButton);
 		objectAssociatedMarker1ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker1ColorMLButton);
 		objectAssociatedMarker1RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker1RemoveButton);
 		objectAssociatedMarker1PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker1PositiveLabelButton);
 		objectAssociatedMarker1NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker1NegativeLabelButton);
 		objectAssociatedMarker1TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker1TrainButton);
 		objectAssociatedMarker1LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker1LoadButton);
 		objectAssociatedMarker1SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker1SaveButton);
 		objectAssociatedMarker1Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker1Pattern1Button);
 		objectAssociatedMarker1Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker1Pattern2Button);
 		objectAssociatedMarker1Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker1Pattern3Button);
 		objectAssociatedMarker1Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker1Pattern4Button);
 		objectAssociatedMarker2Button = new JRadioButton("Marker2");
+		scale(objectAssociatedMarker2Button);
 		objectAssociatedMarker2ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker2ColorButton);
 		objectAssociatedMarker2ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker2ColorMLButton);
 		objectAssociatedMarker2RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker2RemoveButton);
 		objectAssociatedMarker2PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker2PositiveLabelButton);
 		objectAssociatedMarker2NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker2NegativeLabelButton);
 		objectAssociatedMarker2TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker2TrainButton);
 		objectAssociatedMarker2LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker2LoadButton);
 		objectAssociatedMarker2SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker2SaveButton);
 		objectAssociatedMarker2Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker2Pattern1Button);
 		objectAssociatedMarker2Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker2Pattern2Button);
 		objectAssociatedMarker2Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker2Pattern3Button);
 		objectAssociatedMarker2Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker2Pattern4Button);
 		objectAssociatedMarker3Button = new JRadioButton("Marker3");
+		scale(objectAssociatedMarker3Button);
 		objectAssociatedMarker3ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker3ColorButton);
 		objectAssociatedMarker3ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker3ColorMLButton);
 		objectAssociatedMarker3RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker3RemoveButton);
 		objectAssociatedMarker3PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker3PositiveLabelButton);
 		objectAssociatedMarker3NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker3NegativeLabelButton);
 		objectAssociatedMarker3TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker3TrainButton);
 		objectAssociatedMarker3LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker3LoadButton);
 		objectAssociatedMarker3SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker3SaveButton);
 		objectAssociatedMarker3Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker3Pattern1Button);
 		objectAssociatedMarker3Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker3Pattern2Button);
 		objectAssociatedMarker3Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker3Pattern3Button);
 		objectAssociatedMarker3Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker3Pattern4Button);
 		objectAssociatedMarker4Button = new JRadioButton("Marker4");
+		scale(objectAssociatedMarker4Button);
 		objectAssociatedMarker4ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker4ColorButton);
 		objectAssociatedMarker4ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker4ColorMLButton);
 		objectAssociatedMarker4RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker4RemoveButton);
 		objectAssociatedMarker4PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker4PositiveLabelButton);
 		objectAssociatedMarker4NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker4NegativeLabelButton);
 		objectAssociatedMarker4TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker4TrainButton);
 		objectAssociatedMarker4LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker4LoadButton);
 		objectAssociatedMarker4SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker4SaveButton);
 		objectAssociatedMarker4Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker4Pattern1Button);
 		objectAssociatedMarker4Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker4Pattern2Button);
 		objectAssociatedMarker4Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker4Pattern3Button);
 		objectAssociatedMarker4Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker4Pattern4Button);
 		objectAssociatedMarker5Button = new JRadioButton("Marker5");
+		scale(objectAssociatedMarker5Button);
 		objectAssociatedMarker5ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker5ColorButton);
 		objectAssociatedMarker5ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker5ColorMLButton);
 		objectAssociatedMarker5RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker5RemoveButton);
 		objectAssociatedMarker5PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker5PositiveLabelButton);
 		objectAssociatedMarker5NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker5NegativeLabelButton);
 		objectAssociatedMarker5TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker5TrainButton);
 		objectAssociatedMarker5LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker5LoadButton);
 		objectAssociatedMarker5SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker5SaveButton);
 		objectAssociatedMarker5Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker5Pattern1Button);
 		objectAssociatedMarker5Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker5Pattern2Button);
 		objectAssociatedMarker5Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker5Pattern3Button);
 		objectAssociatedMarker5Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker5Pattern4Button);
 		objectAssociatedMarker6Button = new JRadioButton("Marker6");
+		scale(objectAssociatedMarker6Button);
 		objectAssociatedMarker6ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker6ColorButton);
 		objectAssociatedMarker6ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker6ColorMLButton);
 		objectAssociatedMarker6RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker6RemoveButton);
 		objectAssociatedMarker6PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker6PositiveLabelButton);
 		objectAssociatedMarker6NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker6NegativeLabelButton);
 		objectAssociatedMarker6TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker6TrainButton);
 		objectAssociatedMarker6LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker6LoadButton);
 		objectAssociatedMarker6SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker6SaveButton);
 		objectAssociatedMarker6Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker6Pattern1Button);
 		objectAssociatedMarker6Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker6Pattern2Button);
 		objectAssociatedMarker6Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker6Pattern3Button);
 		objectAssociatedMarker6Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker6Pattern4Button);
 		objectAssociatedMarker7Button = new JRadioButton("Marker7");
+		scale(objectAssociatedMarker7Button);
 		objectAssociatedMarker7ColorButton = new JButton("Color");
+		scale(objectAssociatedMarker7ColorButton);
 		objectAssociatedMarker7ColorMLButton = new JButton("Color");
+		scale(objectAssociatedMarker7ColorMLButton);
 		objectAssociatedMarker7RemoveButton = new JButton("Remove");
+		scale(objectAssociatedMarker7RemoveButton);
 		objectAssociatedMarker7PositiveLabelButton = new JRadioButton("M+");
+		scale(objectAssociatedMarker7PositiveLabelButton);
 		objectAssociatedMarker7NegativeLabelButton = new JRadioButton("M-");
+		scale(objectAssociatedMarker7NegativeLabelButton);
 		objectAssociatedMarker7TrainButton = new JButton("Train");
+		scale(objectAssociatedMarker7TrainButton);
 		objectAssociatedMarker7LoadButton = new JButton("Load");
+		scale(objectAssociatedMarker7LoadButton);
 		objectAssociatedMarker7SaveButton = new JButton("Save");
+		scale(objectAssociatedMarker7SaveButton);
 		objectAssociatedMarker7Pattern1Button = new JRadioButton("P1");
+		scale(objectAssociatedMarker7Pattern1Button);
 		objectAssociatedMarker7Pattern2Button = new JRadioButton("P2");
+		scale(objectAssociatedMarker7Pattern2Button);
 		objectAssociatedMarker7Pattern3Button = new JRadioButton("P3");
+		scale(objectAssociatedMarker7Pattern3Button);
 		objectAssociatedMarker7Pattern4Button = new JRadioButton("P4");
+		scale(objectAssociatedMarker7Pattern4Button);
 
 		analyzeMarkersButton = new JButton("Measurements");
+		scale(analyzeMarkersButton);
 		batchMarkersButton = new JButton("Batch");
+		scale(batchMarkersButton);
 		markerSnapshotButton = new JButton("Snapshot");
+		scale(markerSnapshotButton);
 		loadObjectAssociatedMarkerButton = new JButton("Load");
+		scale(loadObjectAssociatedMarkerButton);
 		saveObjectAssociatedMarkerButton = new JButton("Save");
+		scale(saveObjectAssociatedMarkerButton);
 
 		markersOverlay = new Overlay();
 		roiListener = new RoiListener();
@@ -793,70 +912,133 @@ public class Annotater<T extends RealType<T>> implements Command {
 		featuresForEachMarker[0] = new ArrayList<double[]>();
 		
 		redCheck = new JRadioButton("Red");
+		scale(redCheck);
 		greenCheck = new JRadioButton("Green");
+		scale(greenCheck);
 		blueCheck = new JRadioButton("Blue");
+		scale(blueCheck);
 		yellowCheck = new JRadioButton("Yellow");
+		scale(yellowCheck);
 		magentaCheck = new JRadioButton("Magenta");
+		scale(magentaCheck);
 		cyanCheck = new JRadioButton("Cyan");
+		scale(cyanCheck);
 		orangeCheck = new JRadioButton("Orange");
+		scale(orangeCheck);
 		pinkCheck = new JRadioButton("Pink");
+		scale(pinkCheck);
 		blackCheck = new JRadioButton("Black");
+		scale(blackCheck);
 		grayCheck = new JRadioButton("Gray");
+		scale(grayCheck);
 		whiteCheck = new JRadioButton("White");
+		scale(whiteCheck);
 
 		redCheck1 = new JRadioButton("Red");
+		scale(redCheck1);
 		greenCheck1 = new JRadioButton("Green");
+		scale(greenCheck1);
 		blueCheck1 = new JRadioButton("Blue");
+		scale(blueCheck1);
 		yellowCheck1 = new JRadioButton("Yellow");
+		scale(yellowCheck1);
 		magentaCheck1 = new JRadioButton("Magenta");
+		scale(magentaCheck1);
 		cyanCheck1 = new JRadioButton("Cyan");
+		scale(cyanCheck1);
 		orangeCheck1 = new JRadioButton("Orange");
+		scale(orangeCheck1);
 		pinkCheck1 = new JRadioButton("Pink");
+		scale(pinkCheck1);
 		blackCheck1 = new JRadioButton("Black");
+		scale(blackCheck1);
 		grayCheck1 = new JRadioButton("Gray");
+		scale(grayCheck1);
 		whiteCheck1 = new JRadioButton("White");
+		scale(whiteCheck1);
 		redCheck2 = new JRadioButton("Red");
+		scale(redCheck2);
 		greenCheck2 = new JRadioButton("Green");
+		scale(greenCheck2);
 		blueCheck2 = new JRadioButton("Blue");
+		scale(blueCheck2);
 		yellowCheck2 = new JRadioButton("Yellow");
+		scale(yellowCheck2);
 		magentaCheck2 = new JRadioButton("Magenta");
+		scale(magentaCheck2);
 		cyanCheck2 = new JRadioButton("Cyan");
+		scale(cyanCheck2);
 		orangeCheck2 = new JRadioButton("Orange");
+		scale(orangeCheck2);
 		pinkCheck2 = new JRadioButton("Pink");
+		scale(pinkCheck2);
 		blackCheck2 = new JRadioButton("Black");
+		scale(blackCheck2);
 		grayCheck2 = new JRadioButton("Gray");
+		scale(grayCheck2);
 		whiteCheck2 = new JRadioButton("White");
+		scale(whiteCheck2);
 		redCheck3 = new JRadioButton("Red");
+		scale(redCheck3);
 		greenCheck3 = new JRadioButton("Green");
+		scale(greenCheck3);
 		blueCheck3 = new JRadioButton("Blue");
+		scale(blueCheck3);
 		yellowCheck3 = new JRadioButton("Yellow");
+		scale(yellowCheck3);
 		magentaCheck3 = new JRadioButton("Magenta");
+		scale(magentaCheck3);
 		cyanCheck3 = new JRadioButton("Cyan");
+		scale(cyanCheck3);
 		orangeCheck3 = new JRadioButton("Orange");
+		scale(orangeCheck3);
 		pinkCheck3 = new JRadioButton("Pink");
+		scale(pinkCheck3);
 		blackCheck3 = new JRadioButton("Black");
+		scale(blackCheck3);
 		grayCheck3 = new JRadioButton("Gray");
+		scale(grayCheck3);
 		whiteCheck3 = new JRadioButton("White");
+		scale(whiteCheck3);
 		redCheck4 = new JRadioButton("Red");
+		scale(redCheck4);
 		greenCheck4 = new JRadioButton("Green");
+		scale(greenCheck4);
 		blueCheck4 = new JRadioButton("Blue");
+		scale(blueCheck4);
 		yellowCheck4 = new JRadioButton("Yellow");
+		scale(yellowCheck4);
 		magentaCheck4 = new JRadioButton("Magenta");
+		scale(magentaCheck4);
 		cyanCheck4 = new JRadioButton("Cyan");
+		scale(cyanCheck4);
 		orangeCheck4 = new JRadioButton("Orange");
+		scale(orangeCheck4);
 		pinkCheck4 = new JRadioButton("Pink");
+		scale(pinkCheck4);
 		blackCheck4 = new JRadioButton("Black");
+		scale(blackCheck4);
 		grayCheck4 = new JRadioButton("Gray");
+		scale(grayCheck4);
 		whiteCheck4 = new JRadioButton("White");
+		scale(whiteCheck4);
 
 		intensityThresholdingForObjectAssociatedMarkerScrollBar = new JSlider(0, 100, 0);
+		scale(intensityThresholdingForObjectAssociatedMarkerScrollBar);
 		intensityThresholdingForObjectAssociatedMarkerTextArea = new JTextArea();
+		scale(intensityThresholdingForObjectAssociatedMarkerTextArea);
 		setIntensityThresholdForObjectAssociatedMarkerButton = new JButton("Set threshold");
+		scale(setIntensityThresholdForObjectAssociatedMarkerButton);
 		areaThresholdingScrollBar = new JSlider(0, 100, 35);
+		scale(areaThresholdingScrollBar);
 		areaThresholdingTextArea = new JTextArea();
+		scale(areaThresholdingTextArea);
 		setAreaThresholdButton = new JButton("Set threshold");
+		scale(setAreaThresholdButton);
 		okMarkerForObjectAssociatedMarkersButton = new JButton("Ok");
+		scale(okMarkerForObjectAssociatedMarkersButton);
 		cancelMarkerForObjectAssociatedMarkersButton = new JButton("Cancel");
+		scale(cancelMarkerForObjectAssociatedMarkersButton);
 
 		byte[] channel1cm = new byte[256], channel2cm = new byte[256], channel3cm = new byte[256];
 
@@ -876,7 +1058,12 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 	@Override
 	public void run() {
-
+		try {
+			System.setProperty("sun.java2d.uiScale", "3.0");
+        } catch(Exception e) {
+			IJ.showMessage("Problem when changing resolution");
+        }
+		
 		if (IJ.macroRunning()) {
 			String macroParameters = Macro.getOptions();
 
@@ -1033,7 +1220,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			if((dims[2]==1)&&(dims[3]==1)&&(dims[4]==1)) {
 				IJ.run("Grays");
 			}
-
 
 		}
 
@@ -1778,9 +1964,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						updateAnnotateChannelPatternButtons(41);
 					}
 					else if(e.getSource() == objectAssociatedMarker1TrainButton){
+						if(currentObjectAssociatedMarker!=0){
+							updateAnnotateChannelPatternButtons(4);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(0);
-						updateAnnotateChannelPatternButtons(4);
 						train(0);
 					}
 					else if(e.getSource() == objectAssociatedMarker1SaveButton){
@@ -1792,9 +1980,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(0);
 					}
 					else if(e.getSource() == objectAssociatedMarker2TrainButton){
+						if(currentObjectAssociatedMarker!=1){
+							updateAnnotateChannelPatternButtons(10);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(1);
-						updateAnnotateChannelPatternButtons(10);
 						train(1);
 					}
 					else if(e.getSource() == objectAssociatedMarker2SaveButton){
@@ -1806,9 +1996,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(1);
 					}
 					else if(e.getSource() == objectAssociatedMarker3TrainButton){
+						if(currentObjectAssociatedMarker!=2){
+							updateAnnotateChannelPatternButtons(16);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(2);
-						updateAnnotateChannelPatternButtons(16);
 						train(2);
 					}
 					else if(e.getSource() == objectAssociatedMarker3SaveButton){
@@ -1820,9 +2012,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(2);
 					}
 					else if(e.getSource() == objectAssociatedMarker4TrainButton){
+						if(currentObjectAssociatedMarker!=3){
+							updateAnnotateChannelPatternButtons(22);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(3);
-						updateAnnotateChannelPatternButtons(22);
 						train(3);
 					}
 					else if(e.getSource() == objectAssociatedMarker4SaveButton){
@@ -1834,9 +2028,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(3);
 					}
 					else if(e.getSource() == objectAssociatedMarker5TrainButton){
+						if(currentObjectAssociatedMarker!=4){
+							updateAnnotateChannelPatternButtons(28);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(4);
-						updateAnnotateChannelPatternButtons(28);
 						train(4);
 					}
 					else if(e.getSource() == objectAssociatedMarker5SaveButton){
@@ -1848,9 +2044,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(4);
 					}
 					else if(e.getSource() == objectAssociatedMarker6TrainButton){
+						if(currentObjectAssociatedMarker!=5){
+							updateAnnotateChannelPatternButtons(34);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(5);
-						updateAnnotateChannelPatternButtons(34);
 						train(5);
 					}
 					else if(e.getSource() == objectAssociatedMarker6SaveButton){
@@ -1862,9 +2060,11 @@ public class Annotater<T extends RealType<T>> implements Command {
 						loadDataForLogisticRegression(5);
 					}
 					else if(e.getSource() == objectAssociatedMarker7TrainButton){
+						if(currentObjectAssociatedMarker!=6){
+							updateAnnotateChannelPatternButtons(40);
+						}
 						removeMarkersFromOverlay();
 						removeObjectAssociatedMarkerForML(6);
-						updateAnnotateChannelPatternButtons(40);
 						train(6);
 					}
 					else if(e.getSource() == objectAssociatedMarker7SaveButton){
@@ -2250,6 +2450,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 		//@Override
 		public void paint(Graphics g) {
+			
 			Rectangle srcRect = getSrcRect();
 			double mag = getMagnification();
 			int dw = (int)(srcRect.width * mag);
@@ -2487,10 +2688,39 @@ public class Annotater<T extends RealType<T>> implements Command {
 		objectAssociatedMarker7Pattern4Button.addActionListener(listener);
 	}
 	/**
+	 * Change font for Swing components to adopt current GUI scale
+	 */
+	void scale(JRadioButton button){
+		if(Prefs.getGuiScale()!=1.0){
+			button.setFont(button.getFont().deriveFont((float)(button.getFont().getSize()*Prefs.getGuiScale())));
+		}
+	}
+	void scale(JButton button){
+		if(Prefs.getGuiScale()!=1.0){
+			button.setFont(button.getFont().deriveFont((float)(button.getFont().getSize()*Prefs.getGuiScale())));
+		}
+	}
+	void scale(JSlider slider){
+		if(Prefs.getGuiScale()!=1.0){
+			slider.setFont(slider.getFont().deriveFont((float)(slider.getFont().getSize()*Prefs.getGuiScale())));
+		}
+	}
+	void scale(JTextArea text_area){
+		if(Prefs.getGuiScale()!=1.0){
+			text_area.setFont(text_area.getFont().deriveFont((float)(text_area.getFont().getSize()*Prefs.getGuiScale())));
+		}
+	}
+	void scale(JLabel JL){
+		if(Prefs.getGuiScale()!=1.0){
+			JL.setFont(JL.getFont().deriveFont((float)(JL.getFont().getSize()*Prefs.getGuiScale())));
+		}
+	}
+	/**
 	 * Custom window to define the GUI
 	 */
 	private class CustomWindow extends ImageWindow 
 	{
+		
 		private JPanel modePanel = new JPanel();
 		private JPanel analysisPanel1 = new JPanel();
 		private JPanel analysisPanel2 = new JPanel();
@@ -2547,7 +2777,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 		private JPanel bottomPanel1 = new JPanel();
 
 		private Panel all = new Panel();
-
+		
 		GridBagLayout classesLayout = new GridBagLayout();
 		GridBagConstraints classesConstraints = new GridBagConstraints();
 		GridBagLayout areaLayout = new GridBagLayout();
@@ -2571,7 +2801,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			setTitle("Annotater");
 
 			// Mode panel
-			modePanel.setBorder(BorderFactory.createTitledBorder("Mode"));
 			GridBagLayout modeLayout = new GridBagLayout();
 			GridBagConstraints modeConstraints = new GridBagConstraints();
 			modeConstraints.anchor = GridBagConstraints.NORTHWEST;
@@ -2582,6 +2811,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			modeConstraints.gridy = 0;
 			modePanel.setLayout(modeLayout);
 
+			if(Prefs.getGuiScale()==1.0){
+				modePanel.setBorder(BorderFactory.createTitledBorder("Mode"));
+			}
+			else{
+				JTextArea modeTitle = new JTextArea("Mode");
+				scale(modeTitle);
+				modePanel.add(modeTitle, modeConstraints);
+				modeConstraints.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				modePanel.add(blankTitle, modeConstraints);
+				modeConstraints.gridy++;
+				modeConstraints.gridx=0;
+			}
 			modePanel.add(objectsAnnotationButton,modeConstraints);
 			modeConstraints.gridx++;
 			modePanel.add(markerAnnotationButton,modeConstraints);
@@ -2647,7 +2890,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			fileConstraints3.gridx++;
 
 			// Analysis panel 1
-			analysisPanel1.setBorder(BorderFactory.createTitledBorder("Analysis"));
 			analysisConstraints1.anchor = GridBagConstraints.NORTHWEST;
 			analysisConstraints1.fill = GridBagConstraints.HORIZONTAL;
 			analysisConstraints1.gridwidth = 1;
@@ -2656,6 +2898,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			analysisConstraints1.gridy = 0;
 			analysisPanel1.setLayout(analysisLayout1);
 
+			if(Prefs.getGuiScale()==1.0){
+				analysisPanel1.setBorder(BorderFactory.createTitledBorder("Analysis"));
+			}
+			else{
+				JTextArea analysisPanel1Title = new JTextArea("Analysis");
+				scale(analysisPanel1Title);
+				analysisPanel1.add(analysisPanel1Title, analysisConstraints1);
+				analysisConstraints1.gridy++;
+			}
 			analysisPanel1.add(analyzeClassesButton,analysisConstraints1);
 			analysisConstraints1.gridy++;
 			analysisPanel1.add(classSnapshotButton,analysisConstraints1);
@@ -2663,7 +2914,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			analysisPanel1.add(batchClassesMeasurementsButton,analysisConstraints1);
 
 			// Analysis panel 2
-			analysisPanel2.setBorder(BorderFactory.createTitledBorder("Analysis"));
 			GridBagLayout analysisLayout2 = new GridBagLayout();
 			GridBagConstraints analysisConstraints2 = new GridBagConstraints();
 			analysisConstraints2.anchor = GridBagConstraints.NORTHWEST;
@@ -2674,6 +2924,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			analysisConstraints2.gridy = 0;
 			analysisPanel2.setLayout(analysisLayout2);
 
+			if(Prefs.getGuiScale()==1.0){
+				analysisPanel2.setBorder(BorderFactory.createTitledBorder("Analysis"));
+			}
+			else{
+				JTextArea analysisPanel2Title = new JTextArea("Analysis");
+				scale(analysisPanel2Title);
+				analysisPanel2.add(analysisPanel2Title, analysisConstraints2);
+				analysisConstraints2.gridy++;
+			}
 			analysisPanel2.add(analyzeMarkersButton, analysisConstraints2);
 			analysisConstraints2.gridy++;
 			analysisPanel2.add(markerSnapshotButton,analysisConstraints2);
@@ -3137,7 +3396,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			marker7PatternConstraints3.gridx++;
 
 			// load Image And Segmentation Panel to annotate other + and - cells
-			loadImageAndSegmentationPanel.setBorder(BorderFactory.createTitledBorder("Load image & segmentation"));
 			loadImageAndSegmentationConstraints.anchor = GridBagConstraints.NORTHWEST;
 			loadImageAndSegmentationConstraints.fill = GridBagConstraints.HORIZONTAL;
 			loadImageAndSegmentationConstraints.gridwidth = 1;
@@ -3145,10 +3403,18 @@ public class Annotater<T extends RealType<T>> implements Command {
 			loadImageAndSegmentationConstraints.gridx = 0;
 			loadImageAndSegmentationConstraints.gridy = 0;
 			loadImageAndSegmentationPanel.setLayout(loadImageAndSegmentationLayout);
+			if(Prefs.getGuiScale()==1.0){
+				loadImageAndSegmentationPanel.setBorder(BorderFactory.createTitledBorder("Load image & segmentation"));
+			}
+			else{
+				JTextArea loadImageAndSegmentationTitle = new JTextArea("Load image & segmentation");
+				scale(loadImageAndSegmentationTitle);
+				loadImageAndSegmentationPanel.add(loadImageAndSegmentationTitle, loadImageAndSegmentationConstraints);
+				loadImageAndSegmentationConstraints.gridy++;
+			}
 			loadImageAndSegmentationPanel.add(loadImageAndSegmentationButton,loadImageAndSegmentationConstraints);
 			
 			// Object associated markers panel
-			objectAssociatedMarkersPanel.setBorder(BorderFactory.createTitledBorder("Objects"));
 			objectAssociatedMarkersConstraints.anchor = GridBagConstraints.NORTHWEST;
 			objectAssociatedMarkersConstraints.fill = GridBagConstraints.HORIZONTAL;
 			objectAssociatedMarkersConstraints.gridwidth = 1;
@@ -3157,6 +3423,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			objectAssociatedMarkersConstraints.gridy = 0;
 			objectAssociatedMarkersPanel.setLayout(objectAssociatedMarkersLayout);
 
+			if(Prefs.getGuiScale()==1.0){
+				objectAssociatedMarkersPanel.setBorder(BorderFactory.createTitledBorder("Objects"));
+			}
+			else{
+				JTextArea objectAssociatedMarkersTitle = new JTextArea("Objects");
+				scale(objectAssociatedMarkersTitle);
+				objectAssociatedMarkersPanel.add(objectAssociatedMarkersTitle, objectAssociatedMarkersConstraints);
+				objectAssociatedMarkersConstraints.gridy++;
+			}
 			objectAssociatedMarkersPanel.add(filePanel2,objectAssociatedMarkersConstraints);
 			objectAssociatedMarkersConstraints.gridy++;
 			objectAssociatedMarkersPanel.add(addObjectAssociatedMarkerButton,objectAssociatedMarkersConstraints);
@@ -3257,7 +3532,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			if(currentMode==1) {Toolbar.getInstance().setTool(Toolbar.POINT);}
 
 			// Visualization panel 1
-			visualizationPanel1.setBorder(BorderFactory.createTitledBorder("Channel selection"));
 			GridBagLayout visualizationLayout1 = new GridBagLayout();
 			GridBagConstraints visualizationConstraints1 = new GridBagConstraints();
 			visualizationConstraints1.anchor = GridBagConstraints.NORTHWEST;
@@ -3268,6 +3542,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			visualizationConstraints1.gridy = 0;
 
 			visualizationPanel1.setLayout(visualizationLayout1);
+			if(Prefs.getGuiScale()==1.0){
+				visualizationPanel1.setBorder(BorderFactory.createTitledBorder("Channel selection"));
+			}
+			else{
+				JTextArea visualizationTitle = new JTextArea("Channel selection");
+				scale(visualizationTitle);
+				visualizationPanel1.add(visualizationTitle, visualizationConstraints1);
+				visualizationConstraints1.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				visualizationPanel1.add(blankTitle, visualizationConstraints1);
+				visualizationConstraints1.gridy++;
+				visualizationConstraints1.gridx=0;
+			}
 			visualizationPanel1.add(visualizeChannel1Button1, visualizationConstraints1);
 			visualizationConstraints1.gridx++;
 			visualizationPanel1.add(visualizeChannel1onlyButton1, visualizationConstraints1);
@@ -3324,7 +3612,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			
 			
 			// Visualization panel 2
-			visualizationPanel2.setBorder(BorderFactory.createTitledBorder("Channel selection"));
 			GridBagLayout visualizationLayout2 = new GridBagLayout();
 			GridBagConstraints visualizationConstraints2 = new GridBagConstraints();
 			visualizationConstraints2.anchor = GridBagConstraints.NORTHWEST;
@@ -3335,6 +3622,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			visualizationConstraints2.gridy = 0;
 			visualizationPanel2.setLayout(visualizationLayout2);
 
+			if(Prefs.getGuiScale()==1.0){
+				visualizationPanel2.setBorder(BorderFactory.createTitledBorder("Channel selection"));
+			}
+			else{
+				JTextArea visualizationTitle = new JTextArea("Channel selection");
+				scale(visualizationTitle);
+				visualizationPanel2.add(visualizationTitle, visualizationConstraints2);
+				visualizationConstraints2.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				visualizationPanel2.add(blankTitle, visualizationConstraints2);
+				visualizationConstraints2.gridy++;
+				visualizationConstraints2.gridx=0;
+			}
 			visualizationPanel2.add(visualizeChannel1Button2, visualizationConstraints2);
 			visualizationConstraints2.gridx++;
 			visualizationPanel2.add(visualizeChannel1onlyButton2, visualizationConstraints2);
@@ -3395,7 +3696,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			visualizeAllChannelsButton2.setSelected(true);
 
 			// Visualization panel 3
-			visualizationPanel3.setBorder(BorderFactory.createTitledBorder("Object and area visualization"));
 			GridBagLayout visualizationLayout3 = new GridBagLayout();
 			GridBagConstraints visualizationConstraints3 = new GridBagConstraints();
 			visualizationConstraints3.anchor = GridBagConstraints.NORTHWEST;
@@ -3406,12 +3706,25 @@ public class Annotater<T extends RealType<T>> implements Command {
 			visualizationConstraints3.gridy = 0;
 
 			visualizationPanel3.setLayout(visualizationLayout1);
+			if(Prefs.getGuiScale()==1.0){
+				visualizationPanel3.setBorder(BorderFactory.createTitledBorder("Object and area visualization"));
+			}
+			else{
+				JTextArea visualizationTitle = new JTextArea("Object and area visualization");
+				scale(visualizationTitle);
+				visualizationPanel3.add(visualizationTitle, visualizationConstraints3);
+				visualizationConstraints3.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				visualizationPanel3.add(blankTitle, visualizationConstraints3);
+				visualizationConstraints3.gridy++;
+				visualizationConstraints3.gridx=0;
+			}
 			visualizationPanel3.add(visualizeObjectsButton1, visualizationConstraints3);
 			visualizationConstraints3.gridx++;
 			visualizationPanel3.add(visualizeAreasButton1, visualizationConstraints3);
 
 			// Visualization panel 4
-			visualizationPanel4.setBorder(BorderFactory.createTitledBorder("Object and area visualization"));
 			GridBagLayout visualizationLayout4 = new GridBagLayout();
 			GridBagConstraints visualizationConstraints4 = new GridBagConstraints();
 			visualizationConstraints4.anchor = GridBagConstraints.NORTHWEST;
@@ -3422,12 +3735,25 @@ public class Annotater<T extends RealType<T>> implements Command {
 			visualizationConstraints4.gridy = 0;
 
 			visualizationPanel4.setLayout(visualizationLayout1);
+			if(Prefs.getGuiScale()==1.0){
+				visualizationPanel4.setBorder(BorderFactory.createTitledBorder("Object and area visualization"));
+			}
+			else{
+				JTextArea visualizationTitle = new JTextArea("Object and area visualization");
+				scale(visualizationTitle);
+				visualizationPanel4.add(visualizationTitle, visualizationConstraints4);
+				visualizationConstraints4.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				visualizationPanel4.add(blankTitle, visualizationConstraints4);
+				visualizationConstraints4.gridy++;
+				visualizationConstraints4.gridx=0;
+			}
 			visualizationPanel4.add(visualizeObjectsButton2, visualizationConstraints4);
 			visualizationConstraints4.gridx++;
 			visualizationPanel4.add(visualizeAreasButton2, visualizationConstraints4);
 
 			// Annotation panel 1
-			annotationPanel1.setBorder(BorderFactory.createTitledBorder("Object annotation"));
 			GridBagLayout annotationLayout = new GridBagLayout();
 			GridBagConstraints annotationConstraints = new GridBagConstraints();
 			annotationConstraints.anchor = GridBagConstraints.NORTHWEST;
@@ -3439,6 +3765,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			//annotationConstraints.insets = new Insets(5, 5, 6, 6);
 			annotationPanel1.setLayout(annotationLayout);
 
+			if(Prefs.getGuiScale()==1.0){
+				annotationPanel1.setBorder(BorderFactory.createTitledBorder("Object annotation"));
+			}
+			else{
+				JTextArea annotationPanel1Title = new JTextArea("Object annotation");
+				scale(annotationPanel1Title);
+				annotationPanel1.add(annotationPanel1Title, annotationConstraints);
+				annotationConstraints.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				annotationPanel1.add(blankTitle, annotationConstraints);
+				annotationConstraints.gridy++;
+				annotationConstraints.gridx=0;
+			}
 			annotationPanel1.add(newObjectButton, annotationConstraints);
 			annotationConstraints.gridx++;
 			newObjectButton.setSelected(true);
@@ -3460,7 +3800,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			swapObjectClassButton.setSelected(false);
 
 			// Classes panel
-			classesPanel.setBorder(BorderFactory.createTitledBorder("Object classes"));
 			classesConstraints.anchor = GridBagConstraints.NORTHWEST;
 			classesConstraints.fill = GridBagConstraints.HORIZONTAL;
 			classesConstraints.gridwidth = 1;
@@ -3470,6 +3809,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			//classesConstraints.insets = new Insets(5, 5, 6, 6);
 			classesPanel.setLayout(classesLayout);
 
+			if(Prefs.getGuiScale()==1.0){
+				classesPanel.setBorder(BorderFactory.createTitledBorder("Object classes"));
+			}
+			else{
+				JTextArea classesPanelTitle = new JTextArea("Object classes");
+				scale(classesPanelTitle);
+				classesPanel.add(classesPanelTitle, classesConstraints);
+				classesConstraints.gridy++;
+			}
 			classesPanel.add(filePanel1,classesConstraints);
 			classesConstraints.gridy++;
 			classesPanel.add(addClassButton,classesConstraints);
@@ -3581,7 +3929,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			}
 
 			// Annotation panel 2
-			annotationPanel2.setBorder(BorderFactory.createTitledBorder("Region annotation"));
 			GridBagLayout annotationLayout2 = new GridBagLayout();
 			GridBagConstraints annotationConstraints2 = new GridBagConstraints();
 			annotationConstraints2.anchor = GridBagConstraints.NORTHWEST;
@@ -3592,6 +3939,20 @@ public class Annotater<T extends RealType<T>> implements Command {
 			annotationConstraints2.gridy = 0;
 			annotationPanel2.setLayout(annotationLayout2);
 
+			if(Prefs.getGuiScale()==1.0){
+				annotationPanel2.setBorder(BorderFactory.createTitledBorder("Region annotation"));
+			}
+			else{
+				JTextArea annotationPanel2Title = new JTextArea("Region annotation");
+				scale(annotationPanel2Title);
+				annotationPanel2.add(annotationPanel2Title, annotationConstraints2);
+				annotationConstraints2.gridx++;
+				JTextArea blankTitle = new JTextArea("");
+				scale(blankTitle);
+				annotationPanel2.add(blankTitle, annotationConstraints2);
+				annotationConstraints2.gridy++;
+				annotationConstraints2.gridx=0;
+			}
 			annotationPanel2.add(newAreaButton, annotationConstraints2);
 			annotationConstraints2.gridx++;
 			newAreaButton.setSelected(false);
@@ -3604,7 +3965,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 			swapAreaClassButton.setSelected(false);
 
 			// Areas panel
-			areaPanel.setBorder(BorderFactory.createTitledBorder("Region classes"));
 			areaConstraints.anchor = GridBagConstraints.NORTHWEST;
 			areaConstraints.fill = GridBagConstraints.HORIZONTAL;
 			areaConstraints.gridwidth = 1;
@@ -3613,6 +3973,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 			areaConstraints.gridy = 0;
 			areaPanel.setLayout(areaLayout);
 
+			if(Prefs.getGuiScale()==1.0){
+				areaPanel.setBorder(BorderFactory.createTitledBorder("Region classes"));
+			}
+			else{
+				JTextArea areaPanelTitle = new JTextArea("Region classes");
+				scale(areaPanelTitle);
+				areaPanel.add(areaPanelTitle, areaConstraints);
+				areaConstraints.gridy++;
+			}
 			areaPanel.add(filePanel3,areaConstraints);
 			areaConstraints.gridy++;
 			areaPanel.add(addAreaButton,areaConstraints);
@@ -3726,7 +4095,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 			// thresholding marker panel
 			JLabel l1,l2;
 			l1 = new JLabel("Intensity thresholding");
+			scale(l1);
 			l2 = new JLabel("Region thresholding");
+			scale(l2);
 			JPanel thresholdingMarkerPanel = new JPanel(), intensityThresholdingForObjectAssociatedMarkerMarkerPanel = new JPanel(), areaThresholdingMarkerPanel = new JPanel();
 			thresholdingMarkerPanel.setBorder(BorderFactory.createTitledBorder(""));
 			GridBagLayout thresholdingMarkerPanelLayout = new GridBagLayout();
@@ -3794,6 +4165,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			// thresholding marker panel
 			JLabel l3;
 			l3 = new JLabel("Intensity thresholding");
+			scale(l3);
 			JPanel thresholdingMarkerPanel2 = new JPanel();
 			thresholdingMarkerPanel2.setBorder(BorderFactory.createTitledBorder(""));
 			GridBagLayout thresholdingMarkerPanel2Layout = new GridBagLayout();
@@ -4864,12 +5236,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 		
 		/** buttons for marker characterization */
 		JRadioButton nuclearRadioButton = new JRadioButton("Nuclear marker");
+		scale(nuclearRadioButton);
 		nuclearRadioButton.setSelected(true);
 		JRadioButton membranarRadioButton = new JRadioButton("Nuclear membrane marker");
+		scale(membranarRadioButton);
 		membranarRadioButton.setSelected(false);
 		JRadioButton cytoplasmicRadioButton = new JRadioButton("Cytoplasmic marker");
+		scale(cytoplasmicRadioButton);
 		cytoplasmicRadioButton.setSelected(false);
-
+		
 		ButtonGroup bg1=new ButtonGroup();    
 		bg1.add(nuclearRadioButton);
 		bg1.add(membranarRadioButton);
@@ -4878,6 +5253,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 		JPanel markerTypePanel = new JPanel();
 		markerTypePanel.setBorder(BorderFactory.createTitledBorder(""));
 		GridBagLayout markerTypePanelLayout = new GridBagLayout();
+		
 		GridBagConstraints markerTypePanelConstraints = new GridBagConstraints();
 		markerTypePanelConstraints.anchor = GridBagConstraints.NORTHWEST;
 		markerTypePanelConstraints.fill = GridBagConstraints.HORIZONTAL;
@@ -4894,6 +5270,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 		GenericDialogPlus gd1 = new GenericDialogPlus("Marker creation");
 		gd1.addMessage("What is the type of the marker?");
+		
 		gd1.addComponent(markerTypePanel);
 		gd1.showDialog();
 
@@ -4913,10 +5290,13 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 		/** buttons for thresholding decision */
 		JRadioButton manualAnnotationRadioButton = new JRadioButton("Manual annotation");
+		scale(manualAnnotationRadioButton);
 		manualAnnotationRadioButton.setSelected(true);
 		JRadioButton thresholdingRadioButton = new JRadioButton("Thresholding");
+		scale(thresholdingRadioButton);
 		thresholdingRadioButton.setSelected(false);
 		JRadioButton regressionRadioButton = new JRadioButton("Machine learning");
+		scale(regressionRadioButton);
 		regressionRadioButton.setSelected(false);
 
 		JPanel identificationMethodPanel = new JPanel();
@@ -4960,18 +5340,25 @@ public class Annotater<T extends RealType<T>> implements Command {
 			
 			/** buttons for thresholding decision */
 			JRadioButton channel1RadioButton = new JRadioButton("Channel 1");
+			scale(channel1RadioButton);
 			channel1RadioButton.setSelected(true);
 			JRadioButton channel2RadioButton = new JRadioButton("Channel 2");
+			scale(channel2RadioButton);
 			channel2RadioButton.setSelected(false);
 			JRadioButton channel3RadioButton = new JRadioButton("Channel 3");
+			scale(channel3RadioButton);
 			channel3RadioButton.setSelected(false);
 			JRadioButton channel4RadioButton = new JRadioButton("Channel 4");
+			scale(channel4RadioButton);
 			channel4RadioButton.setSelected(false);
 			JRadioButton channel5RadioButton = new JRadioButton("Channel 5");
+			scale(channel5RadioButton);
 			channel5RadioButton.setSelected(false);
 			JRadioButton channel6RadioButton = new JRadioButton("Channel 6");
+			scale(channel6RadioButton);
 			channel6RadioButton.setSelected(false);
 			JRadioButton channel7RadioButton = new JRadioButton("Channel 7");
+			scale(channel7RadioButton);
 			channel7RadioButton.setSelected(false);
 
 			JPanel currentchannelPanel = new JPanel();
@@ -5187,18 +5574,25 @@ public class Annotater<T extends RealType<T>> implements Command {
 			
 			/** buttons for thresholding decision */
 			JRadioButton channel1RadioButton = new JRadioButton("Channel 1");
+			scale(channel1RadioButton);
 			channel1RadioButton.setSelected(true);
 			JRadioButton channel2RadioButton = new JRadioButton("Channel 2");
+			scale(channel2RadioButton);
 			channel2RadioButton.setSelected(false);
 			JRadioButton channel3RadioButton = new JRadioButton("Channel 3");
+			scale(channel3RadioButton);
 			channel3RadioButton.setSelected(false);
 			JRadioButton channel4RadioButton = new JRadioButton("Channel 4");
+			scale(channel4RadioButton);
 			channel4RadioButton.setSelected(false);
 			JRadioButton channel5RadioButton = new JRadioButton("Channel 5");
+			scale(channel5RadioButton);
 			channel5RadioButton.setSelected(false);
 			JRadioButton channel6RadioButton = new JRadioButton("Channel 6");
+			scale(channel6RadioButton);
 			channel6RadioButton.setSelected(false);
 			JRadioButton channel7RadioButton = new JRadioButton("Channel 7");
+			scale(channel7RadioButton);
 			channel7RadioButton.setSelected(false);
 
 			JPanel currentchannelPanel = new JPanel();
@@ -5314,11 +5708,15 @@ public class Annotater<T extends RealType<T>> implements Command {
 		
 		/** JButton for batch processing */
 		JButton imageFolderButton = new JButton("Image folder");
+		scale(imageFolderButton);
 		JButton segmentationFolderButton = new JButton("Object segmentation folder");
+		scale(segmentationFolderButton);
 		
 		JTextArea imageFolderQuestion = new JTextArea("Choose the new input image");
+		scale(imageFolderQuestion);
 		imageFolderQuestion.setEditable(false);
 		JTextArea segmentationFolderQuestion = new JTextArea("Choose the new segmented image");
+		scale(segmentationFolderQuestion);
 		segmentationFolderQuestion.setEditable(false);
 		
 		JPanel batchPanel = new JPanel();
@@ -5582,7 +5980,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 	{
 		boolean objectBatchProcess = false, markerProcessingBatchProcess = false;
 		if(mode==1){
-			switch ( JOptionPane.showConfirmDialog( null, "Do you want to batch process marker associated objects?", "Objects", JOptionPane.YES_NO_OPTION ) )
+			JLabel label1 = new JLabel("Do you want to batch process marker associated objects?");
+			scale(label1);
+			switch ( JOptionPane.showConfirmDialog( null, label1, "Objects", JOptionPane.YES_NO_OPTION ) )
 			{
 			case JOptionPane.YES_OPTION:
 				objectBatchProcess = true;
@@ -5599,8 +5999,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(goodToGo){
 					/** buttons for marker characterization method */
 					JRadioButton thresholdRadioButton = new JRadioButton("With the previously defined thresholding and/or machine learning methods");
+					scale(thresholdRadioButton);
 					thresholdRadioButton.setSelected(true);
 					JRadioButton fileRadioButton = new JRadioButton("From images");
+					scale(fileRadioButton);
 					fileRadioButton.setSelected(false);
 					if(goodToGo){
 						ButtonGroup bg1=new ButtonGroup();    
@@ -5640,7 +6042,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 			}
 		}
 		boolean areaBatchProcess = false;
-		switch ( JOptionPane.showConfirmDialog( null, "Do you want to add images to define areas?", "Region", JOptionPane.YES_NO_OPTION ) )
+		JLabel label2 = new JLabel("Do you want to add images to define areas?");
+		scale(label2);
+		switch ( JOptionPane.showConfirmDialog( null, label2, "Region", JOptionPane.YES_NO_OPTION ) )
 		{
 		case JOptionPane.YES_OPTION:
 			areaBatchProcess = true;
@@ -5650,7 +6054,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 			break;
 		}
 		boolean outputImageBatchProcess = false;
-		switch ( JOptionPane.showConfirmDialog( null, "Do you want to batch process result images for visual inspection?", "Result image", JOptionPane.YES_NO_OPTION ) )
+		JLabel label3 = new JLabel("Do you want to batch process result images for visual inspection?");
+		scale(label3);
+		switch ( JOptionPane.showConfirmDialog( null, label3, "Result image", JOptionPane.YES_NO_OPTION ) )
 		{
 		case JOptionPane.YES_OPTION:
 			outputImageBatchProcess = true;
@@ -5669,23 +6075,35 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 		/** JButton for batch processing */
 		JButton imageFolderButton = new JButton("Image folder");
+		scale(imageFolderButton);
 		JButton segmentationFolderButton = new JButton("Object segmentation folder");
+		scale(segmentationFolderButton);
 		JButton objectAssociatedMarkerFolderButton = new JButton("Marker associated object folder");
+		scale(objectAssociatedMarkerFolderButton);
 		JButton areaAssociatedMarkerFolderButton = new JButton("Region segmentation folder");
+		scale(areaAssociatedMarkerFolderButton);
 		JButton measurementsFolderButton = new JButton("Measurements folder");
+		scale(measurementsFolderButton);
 		JButton outputImageFolderButton = new JButton("Result image folder");
+		scale(outputImageFolderButton);
 
 		JTextArea imageFolderQuestion = new JTextArea("Where is the folder with the input images?");
+		scale(imageFolderQuestion);
 		imageFolderQuestion.setEditable(false);
 		JTextArea areaAssociatedMarkerFolderQuestion = new JTextArea("Where is the folder with the segmented area images?");
+		scale(areaAssociatedMarkerFolderQuestion);
 		areaAssociatedMarkerFolderQuestion.setEditable(false);
 		JTextArea segmentationFolderQuestion = new JTextArea("Where is the folder with the segmented object images?");
+		scale(segmentationFolderQuestion);
 		segmentationFolderQuestion.setEditable(false);
 		JTextArea objectAssociatedMarkerFolderQuestion = new JTextArea("Where is the destination folder for the marker associated object images?");
+		scale(objectAssociatedMarkerFolderQuestion);
 		objectAssociatedMarkerFolderQuestion.setEditable(false);
 		JTextArea measurementsFolderQuestion = new JTextArea("Where is the destination folder for the measurements?");
+		scale(measurementsFolderQuestion);
 		measurementsFolderQuestion.setEditable(false);
 		JTextArea outputImageFolderQuestion = new JTextArea("Where is the destination folder for the result images?");
+		scale(outputImageFolderQuestion);
 		outputImageFolderQuestion.setEditable(false);
 
 		JPanel batchPanel = new JPanel();
@@ -5881,122 +6299,178 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 
 			JTextArea marker1Sentence = new JTextArea("Marker 1 does not coincide with:");
+			scale(marker1Sentence);
 			marker1Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_1 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_1);
 			marker1RadioButton_1.setEnabled(false);
 			JRadioButton marker2RadioButton_1 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_1);
 			marker2RadioButton_1.setSelected(false);
 			JRadioButton marker3RadioButton_1 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_1);
 			marker3RadioButton_1.setSelected(false);
 			JRadioButton marker4RadioButton_1 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_1);
 			marker4RadioButton_1.setSelected(false);
 			JRadioButton marker5RadioButton_1 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_1);
 			marker5RadioButton_1.setSelected(false);
 			JRadioButton marker6RadioButton_1 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_1);
 			marker6RadioButton_1.setSelected(false);
 			JRadioButton marker7RadioButton_1 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_1);
 			marker7RadioButton_1.setSelected(false);
 
 			JTextArea marker2Sentence = new JTextArea("Marker 2 does not coincide with:");
+			scale(marker2Sentence);
 			marker2Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_2 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_2);
 			marker1RadioButton_2.setSelected(false);
 			JRadioButton marker2RadioButton_2 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_2);
 			marker2RadioButton_2.setEnabled(false);
 			JRadioButton marker3RadioButton_2 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_2);
 			marker3RadioButton_2.setSelected(false);
 			JRadioButton marker4RadioButton_2 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_2);
 			marker4RadioButton_2.setSelected(false);
 			JRadioButton marker5RadioButton_2 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_2);
 			marker5RadioButton_2.setSelected(false);
 			JRadioButton marker6RadioButton_2 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_2);
 			marker6RadioButton_2.setSelected(false);
 			JRadioButton marker7RadioButton_2 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_2);
 			marker7RadioButton_2.setSelected(false);
 
 			JTextArea marker3Sentence = new JTextArea("Marker 3 does not coincide with:");
+			scale(marker3Sentence);
 			marker3Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_3 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_3);
 			marker1RadioButton_3.setSelected(false);
 			JRadioButton marker2RadioButton_3 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_3);
 			marker2RadioButton_3.setSelected(false);
 			JRadioButton marker3RadioButton_3 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_3);
 			marker3RadioButton_3.setEnabled(false);
 			JRadioButton marker4RadioButton_3 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_3);
 			marker4RadioButton_3.setSelected(false);
 			JRadioButton marker5RadioButton_3 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_3);
 			marker5RadioButton_3.setSelected(false);
 			JRadioButton marker6RadioButton_3 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_3);
 			marker6RadioButton_3.setSelected(false);
 			JRadioButton marker7RadioButton_3 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_3);
 			marker7RadioButton_3.setSelected(false);
 
 			JTextArea marker4Sentence = new JTextArea("Marker 4 does not coincide with:");
+			scale(marker4Sentence);
 			marker4Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_4 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_4);
 			marker1RadioButton_4.setSelected(false);
 			JRadioButton marker2RadioButton_4 = new JRadioButton("Marker 2");
+			scale(marker1RadioButton_4);
 			marker2RadioButton_4.setSelected(false);
 			JRadioButton marker3RadioButton_4 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_4);
 			marker3RadioButton_4.setSelected(false);
 			JRadioButton marker4RadioButton_4 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_4);
 			marker4RadioButton_4.setEnabled(false);
 			JRadioButton marker5RadioButton_4 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_4);
 			marker5RadioButton_4.setSelected(false);
 			JRadioButton marker6RadioButton_4 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_4);
 			marker6RadioButton_4.setSelected(false);
 			JRadioButton marker7RadioButton_4 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_4);
 			marker7RadioButton_4.setSelected(false);
 
 			JTextArea marker5Sentence = new JTextArea("Marker 5 does not coincide with:");
+			scale(marker5Sentence);
 			marker5Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_5 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_5);
 			marker1RadioButton_5.setSelected(false);
 			JRadioButton marker2RadioButton_5 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_5);
 			marker2RadioButton_5.setSelected(false);
 			JRadioButton marker3RadioButton_5 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_5);
 			marker3RadioButton_5.setSelected(false);
 			JRadioButton marker4RadioButton_5 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_5);
 			marker4RadioButton_5.setSelected(false);
 			JRadioButton marker5RadioButton_5 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_5);
 			marker5RadioButton_5.setEnabled(false);
 			JRadioButton marker6RadioButton_5 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_5);
 			marker6RadioButton_5.setSelected(false);
 			JRadioButton marker7RadioButton_5 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_5);
 			marker7RadioButton_5.setSelected(false);
 
 			JTextArea marker6Sentence = new JTextArea("Marker 6 does not coincide with:");
+			scale(marker6Sentence);
 			marker6Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_6 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_6);
 			marker1RadioButton_6.setSelected(false);
 			JRadioButton marker2RadioButton_6 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_6);
 			marker2RadioButton_6.setSelected(false);
 			JRadioButton marker3RadioButton_6 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_6);
 			marker3RadioButton_6.setSelected(false);
 			JRadioButton marker4RadioButton_6 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_6);
 			marker4RadioButton_6.setSelected(false);
 			JRadioButton marker5RadioButton_6 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_6);
 			marker5RadioButton_6.setSelected(false);
 			JRadioButton marker6RadioButton_6 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_6);
 			marker6RadioButton_6.setEnabled(false);
 			JRadioButton marker7RadioButton_6 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_6);
 			marker7RadioButton_6.setSelected(false);
 
 			JTextArea marker7Sentence = new JTextArea("Marker 7 does not coincide with:");
+			scale(marker7Sentence);
 			marker7Sentence.setEditable(false);
 			JRadioButton marker1RadioButton_7 = new JRadioButton("Marker 1");
+			scale(marker1RadioButton_7);
 			marker1RadioButton_7.setSelected(false);
 			JRadioButton marker2RadioButton_7 = new JRadioButton("Marker 2");
+			scale(marker2RadioButton_7);
 			marker2RadioButton_7.setSelected(false);
 			JRadioButton marker3RadioButton_7 = new JRadioButton("Marker 3");
+			scale(marker3RadioButton_7);
 			marker3RadioButton_7.setSelected(false);
 			JRadioButton marker4RadioButton_7 = new JRadioButton("Marker 4");
+			scale(marker4RadioButton_7);
 			marker4RadioButton_7.setSelected(false);
 			JRadioButton marker5RadioButton_7 = new JRadioButton("Marker 5");
+			scale(marker5RadioButton_7);
 			marker5RadioButton_7.setSelected(false);
 			JRadioButton marker6RadioButton_7 = new JRadioButton("Marker 6");
+			scale(marker6RadioButton_7);
 			marker6RadioButton_7.setSelected(false);
 			JRadioButton marker7RadioButton_7 = new JRadioButton("Marker 7");
+			scale(marker7RadioButton_7);
 			marker7RadioButton_7.setEnabled(false);
 
 			if(objectBatchProcess){
@@ -6397,7 +6871,9 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 				/** combination of markers */
 				if(nbCombinations>0){
-					switch ( JOptionPane.showConfirmDialog( null, "Do you want to add the previously defined combination of markers?", "Marker combination", JOptionPane.YES_NO_OPTION ) )
+					JLabel label4 = new JLabel("Do you want to add the previously defined combination of markers?");
+					scale(label4);
+					switch ( JOptionPane.showConfirmDialog( null, label4, "Marker combination", JOptionPane.YES_NO_OPTION ) )
 					{
 					case JOptionPane.YES_OPTION:
 						break;
@@ -6414,12 +6890,16 @@ public class Annotater<T extends RealType<T>> implements Command {
 				if(nbCombinations==0){
 					while(markerCombination){
 						JTextArea markerCombinationTextField = new JTextArea();
+						scale(markerCombinationTextField);
 						markerCombinationTextField.setText("");
-						switch ( JOptionPane.showConfirmDialog( null, "Do you want to add a combination of markers?", "Marker combination", JOptionPane.YES_NO_OPTION ) )
+						JLabel label5 = new JLabel("Do you want to add a combination of markers?");
+						scale(label5);
+						switch ( JOptionPane.showConfirmDialog( null, label5, "Marker combination", JOptionPane.YES_NO_OPTION ) )
 						{
 						case JOptionPane.YES_OPTION:
 							/** buttons */
 							JTextArea markerCombinationQuestion = new JTextArea("What is the name of this marker combination?");
+							scale(markerCombinationQuestion);
 							markerCombinationQuestion.setEditable(false);
 
 							JPanel markerCombinationPanel = new JPanel();
@@ -6454,18 +6934,25 @@ public class Annotater<T extends RealType<T>> implements Command {
 						if(markerCombination){
 
 							JRadioButton marker1RadioButton = new JRadioButton("Marker 1");
+							scale(marker1RadioButton);
 							marker1RadioButton.setSelected(false);
 							JRadioButton marker2RadioButton = new JRadioButton("Marker 2");
+							scale(marker2RadioButton);
 							marker2RadioButton.setSelected(false);
 							JRadioButton marker3RadioButton = new JRadioButton("Marker 3");
+							scale(marker3RadioButton);
 							marker3RadioButton.setSelected(false);
 							JRadioButton marker4RadioButton = new JRadioButton("Marker 4");
+							scale(marker4RadioButton);
 							marker4RadioButton.setSelected(false);
 							JRadioButton marker5RadioButton = new JRadioButton("Marker 5");
+							scale(marker5RadioButton);
 							marker5RadioButton.setSelected(false);
 							JRadioButton marker6RadioButton = new JRadioButton("Marker 6");
+							scale(marker6RadioButton);
 							marker6RadioButton.setSelected(false);
 							JRadioButton marker7RadioButton = new JRadioButton("Marker 7");
+							scale(marker7RadioButton);
 							marker7RadioButton.setSelected(false);
 
 							JPanel currentmarkersPanel = new JPanel();
@@ -6852,8 +7339,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 	{
 		/** buttons */
 		JTextArea intensityThresholdQuestion = new JTextArea("What is the intensity threshold?");
+		scale(intensityThresholdQuestion);
 		intensityThresholdQuestion.setEditable(false);
 		JTextArea intensityThresholdTextField = new JTextArea();
+		scale(intensityThresholdTextField);
 		intensityThresholdTextField.setText("" + intensityThresholdingForObjectAssociatedMarkerScrollBar.getValue());
 
 		JPanel thresholdingPanel = new JPanel();
@@ -6900,8 +7389,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 	{
 		/** buttons */
 		JTextArea areaThresholdQuestion = new JTextArea("What is the area threshold (%)?");
+		scale(areaThresholdQuestion);
 		areaThresholdQuestion.setEditable(false);
 		JTextArea areaThresholdTextField = new JTextArea();
+		scale(areaThresholdTextField);
 		areaThresholdTextField.setText("" + areaThresholdingScrollBar.getValue());
 
 		JPanel thresholdingPanel = new JPanel();
@@ -8491,8 +8982,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 				markersOverlay.get(negativelyLabelledNucleiForEachMarker[marker].get(i)).setStrokeWidth(2);
 			}
 		}
-
-
 		displayImage.setOverlay(markersOverlay);
 		displayImage.updateAndDraw();
 	}
@@ -9114,8 +9603,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 	 */
 	private void removeClass(int classToRemove)
 	{
+		JLabel label = new JLabel("Are you sure you want to remove class " + (classToRemove+1) + "?");
+		scale(label);
 		// make sure the user wants to remove the class
-		switch ( JOptionPane.showConfirmDialog( null, "Are you sure you want to remove class " + (classToRemove+1) + "?", "Class removal", JOptionPane.YES_NO_OPTION ) )
+		switch ( JOptionPane.showConfirmDialog( null, label, "Class removal", JOptionPane.YES_NO_OPTION ) )
 		{
 		case JOptionPane.YES_OPTION:
 			// remove nuclei belonging to the class to remove
@@ -9201,8 +9692,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 	 */
 	private void removeWholeArea(int areaToRemove)
 	{
+		JLabel label = new JLabel("Are you sure you want to remove area " + (areaToRemove+1) + "?");
+		scale(label);
 		// make sure the user wants to remove the class
-		switch ( JOptionPane.showConfirmDialog( null, "Are you sure you want to remove area " + (areaToRemove+1) + "?", "Region removal", JOptionPane.YES_NO_OPTION ) )
+		switch ( JOptionPane.showConfirmDialog( null, label, "Region removal", JOptionPane.YES_NO_OPTION ) )
 		{
 		case JOptionPane.YES_OPTION:
 			// remove nuclei belonging to the class to remove
@@ -10310,8 +10803,10 @@ public class Annotater<T extends RealType<T>> implements Command {
 	}
 	private void removeObjectAssociatedMarker(int markerToRemove)
 	{
+		JLabel label = new JLabel("Are you sure you want to remove marker " + (markerToRemove+1) + "?");
+		scale(label);
 		// make sure the user wants to remove the marker
-		switch ( JOptionPane.showConfirmDialog( null, "Are you sure you want to remove marker " + (markerToRemove+1) + "?", "Marker removal", JOptionPane.YES_NO_OPTION ) )
+		switch ( JOptionPane.showConfirmDialog( null, label, "Marker removal", JOptionPane.YES_NO_OPTION ) )
 		{
 		case JOptionPane.YES_OPTION:
 			deleteObjectAssociatedMarker(markerToRemove);
@@ -10435,7 +10930,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 
 		// create testing dataset
 		mc.initializeTestingDataset();
-		
+
 		if(!rt_nuclearML_flag){
 			int initialMeasurements = Analyzer.getMeasurements(),
 					measurementsForFeatures = Measurements.CIRCULARITY;
@@ -10481,7 +10976,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 			minCurrentFeatures[i] = 10000;
 			maxCurrentFeatures[i] = 0;
 		}
-		
+
 		nbObjects=0;
 		for(int i=0;i<numOfClasses;i++) {
 			for(int j=0;j<objectsInEachClass[i].size();j++) {
@@ -10579,18 +11074,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					currentIndex += roiFlag[currentX][currentY][1];
 					mc.addTrainingDatasetElement(currentFeatures[currentIndex][0], currentFeatures[currentIndex][1], currentFeatures[currentIndex][2], currentFeatures[currentIndex][3], 0);
-					/*Polygon fp = cellComponentInEachClass[roiFlag[currentX][pts[pts.length/2].y][0]].get(roiFlag[currentX][pts[pts.length/2].y][1]);
-					double avgValue = 0, stdValue = 0;
-					for(int p=0;p<fp.npoints;p++) {
-						avgValue += ipt.getf(fp.xpoints[p],fp.ypoints[p]);
-					}
-					avgValue /= (float)fp.npoints;
-					for(int p=0;p<fp.npoints;p++) {
-						stdValue += Math.pow(((double)ipt.getf(fp.xpoints[p],fp.ypoints[p])-avgValue), (double)2);
-					}
-					stdValue /= (float)fp.npoints;
-					
-					mc.addTrainingDatasetElement(avgValue,stdValue,(double)(objectsInEachClass[roiFlag[currentX][pts[pts.length/2].y][0]].get(roiFlag[currentX][pts[pts.length/2].y][1]).length), 0);*/
 				}
 			}
 		}
@@ -10618,17 +11101,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 					}
 					currentIndex += roiFlag[currentX][currentY][1];
 					mc.addTrainingDatasetElement(currentFeatures[currentIndex][0], currentFeatures[currentIndex][1], currentFeatures[currentIndex][2], currentFeatures[currentIndex][3], 1);
-					/*Polygon fp = cellComponentInEachClass[roiFlag[currentX][pts[pts.length/2].y][0]].get(roiFlag[currentX][pts[pts.length/2].y][1]);
-					double avgValue = 0, stdValue = 0;
-					for(int p=0;p<fp.npoints;p++) {
-						avgValue += ipt.getf(fp.xpoints[p],fp.ypoints[p]);
-					}
-					avgValue /= (float)fp.npoints;
-					for(int p=0;p<fp.npoints;p++) {
-						stdValue += Math.pow(((double)ipt.getf(fp.xpoints[p],fp.ypoints[p])-avgValue), (double)2);
-					}
-					stdValue /= (float)fp.npoints;
-					mc.addTrainingDatasetElement(avgValue,stdValue,(double)(objectsInEachClass[roiFlag[currentX][pts[pts.length/2].y][0]].get(roiFlag[currentX][pts[pts.length/2].y][1]).length), 1);*/
 				}
 			}
 			
@@ -10640,7 +11112,7 @@ public class Annotater<T extends RealType<T>> implements Command {
 				mc.addTrainingDatasetElement(previousFeatures[0],previousFeatures[1],previousFeatures[2],previousFeatures[3],previousFeatures[4]);
 			}
 		}
-		
+
 		// show training dataset
 		//mc.showTrainingDataset();
 		// train classifier
@@ -14521,7 +14993,6 @@ public class Annotater<T extends RealType<T>> implements Command {
 		// Repaint window
 		win = new CustomWindow(displayImage);
 		win.pack();
-		
 		// refresh overlay
 		if(currentMode==0) {
 			displayImage.setOverlay(overlay);
