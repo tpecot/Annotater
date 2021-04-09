@@ -8,8 +8,8 @@
 	<parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>22.3.0</version>
 		<relativePath />
+		<version>30.0.0</version>
 	</parent>
 
 	<groupId>edu.musc.tsl</groupId>
@@ -19,7 +19,7 @@
 	<name>2D image annotater</name>
 	<description>A plugin to efficiently manually annotate or correct 2D image segmentations (objects and/or areas) and to identify markers associated with objects, either by manually annotating them, by using a thresholding tool or by using a logistic regression.</description>
 	<url>https://www.hollingscancercenter.org/research/shared-resources/tsl/index.html</url>
-	<inceptionYear>2017</inceptionYear>
+	<inceptionYear>2019</inceptionYear>
 	<organization>
 		<name>MUSC</name>
 		<url>https://web.musc.edu/</url>
@@ -62,10 +62,10 @@
 	</mailingLists>
 
 	<scm>
-		<connection>scm:git:git://github.com/imagej/example-imagej-command</connection>
-		<developerConnection>scm:git:git@github.com:imagej/example-imagej-command</developerConnection>
+		<connection>https://github.com/tpecot/Annotater</connection>
+		<developerConnection>https://github.com/tpecot/Annotater</developerConnection>
 		<tag>HEAD</tag>
-		<url>https://github.com/imagej/example-imagej-command</url>
+		<url>https://github.com/tpecot/Annotater</url>
 	</scm>
 	<issueManagement>
 		<system>GitHub Issues</system>
@@ -78,7 +78,7 @@
 	<properties>
 		<package-name>com.mycompany.imagej</package-name>
 		<main-class>com.mycompany.imagej.GaussFiltering</main-class>
-		<license.licenseName>bsd_2</license.licenseName>
+		<license.licenseName>GPL3</license.licenseName>
 		<license.copyrightOwners>My Company, Inc.</license.copyrightOwners>
 	</properties>
 
@@ -97,8 +97,7 @@
 		
     		<dependency>
     			<groupId>sc.fiji</groupId>
-    			<artifactId>fiji-lib</artifactId>
-    			<version>2.1.2</version>
+    			<artifactId>fiji-lib</artifactId><!--$NO-MVN-MAN-VER$-->
     		</dependency>
 	</dependencies>
 </project>
